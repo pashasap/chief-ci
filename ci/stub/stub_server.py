@@ -70,6 +70,9 @@ def apply(cmd):
               "task.done": "done", "task.reopen": "open", "task.drop": "dropped", "waiting.close": "closed"}
     if t in states:
         it["state"] = states[t]
+        if t == "proposal.approve":
+            # The real server queues an action for an approved suggestion; the app shows "Queued as <id>".
+            it["action"] = "A-1113-%d" % (7 + len([p for p in STATE["proposals"] if p.get("action")]))
     elif t == "question.answer":
         it["state"] = "answered"
         it["answer"] = it["options"][a["option"]] if "option" in a else a.get("text")

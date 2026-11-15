@@ -269,6 +269,15 @@
   ],
   "proposals": [
     {
+      "handle": "P-1113-9",
+      "rev": "a7b6c5d4e3f2",
+      "would": "Draft a message to the building manager asking for the autumn gutter cleaning to be booked before the first frost, attach last year's invoice from the house folder, offer two weekday mornings next week, and add a reminder to Today to check for an answer on Friday",
+      "because": "You said the gutters overflowed in the last storm, that the building manager books the cleaning every autumn, and that you want it done before the first frost so the hallway ceiling does not get wet again like last winter",
+      "capture": "c1113-07",
+      "state": "open",
+      "action": null
+    },
+    {
       "handle": "P-1112-8",
       "rev": "e0a1b2c3d4f5",
       "would": "Draft an email to the letting agent asking who insures the garden shed",
