@@ -37,9 +37,13 @@ targets:
         INFOPLIST_FILE: ../Info.plist
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        CODE_SIGNING_ALLOWED: NO
+        # CI-only: ad-hoc "sign to run locally" for the simulator, so the app gets the entitlements the
+        # keychain needs (an unsigned simulator app cannot store its pairing token).
+        CODE_SIGNING_ALLOWED: YES
         CODE_SIGNING_REQUIRED: NO
-        CODE_SIGNING_IDENTITY: ""
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: ""
   KitUITests:
     type: bundle.ui-testing
     platform: iOS

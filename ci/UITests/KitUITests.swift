@@ -29,7 +29,12 @@ final class KitUITests: XCTestCase {
         step("02 pair by typing the link in Settings") {
             tab(app, "Settings")
             shot("02-unpaired-settings")
-            let field = app.textFields["Pairing link"].exists ? app.textFields["Pairing link"] : app.textViews["Pairing link"]
+            let byLabel = NSPredicate(format: "label == 'Pairing link' OR placeholderValue == 'Pairing link'")
+            var field = app.textFields.matching(byLabel).firstMatch
+            for _ in 0..<6 where !field.exists && !app.textViews.matching(byLabel).firstMatch.exists {
+                app.swipeUp(); usleep(600_000)
+            }
+            if !field.exists { field = app.textViews.matching(byLabel).firstMatch }
             note("pairing field exists=\(field.exists)")
             if field.exists {
                 field.tap(); usleep(500_000)
@@ -40,6 +45,8 @@ final class KitUITests: XCTestCase {
                 if pair.exists { pair.tap() }
             }
             var paired = waitText(app, "Paired", timeout: 20)
+            shot("03c-after-pair-tap")
+            dump(app, "after-pair-tap")
             note("paired after typing=\(paired) messages=\(messages(app))")
             if !paired {
                 request("openurl")
@@ -48,7 +55,11 @@ final class KitUITests: XCTestCase {
                 }
                 paired = waitText(app, "Paired", timeout: 20)
                 note("paired after openurl=\(paired)")
+                for _ in 0..<3 { app.swipeUp(); usleep(500_000) }
+                shot("03d-after-openurl-scrolled")
+                dump(app, "after-openurl")
             }
+            toTop(app)
             dismissKeyboard(app)
             sleep(2)
             shot("04-settings-paired")
@@ -212,7 +223,7 @@ final class KitUITests: XCTestCase {
             record.tap(); sleep(2)
             shot("30-record-prompt")
             alerts("record")
-            let allow = springboard.buttons["Allow"]
+            let allow = springboard.alerts.buttons["Allow"].firstMatch
             if allow.waitForExistence(timeout: 4) { allow.tap(); sleep(2) }
             shot("31-record-after-allow")
             dump(app, "record")

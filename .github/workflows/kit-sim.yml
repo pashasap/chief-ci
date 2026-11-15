@@ -64,6 +64,7 @@ jobs:
           echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
           mkdir -p ci/artifacts
           echo "phone=$PHONE runtime=$RT xcode=$XC $(xcodebuild -version | tr '\n' ' ')" > ci/artifacts/device.txt
+          bash ci/stub/make_cert.sh "$RUNNER_TEMP/cert" > ci/artifacts/cert.txt 2>&1
 
       - name: XcodeGen and build-for-testing (generic destination, simulator not booted)
         timeout-minutes: 9
@@ -75,7 +76,7 @@ jobs:
           build () {
             local log=$1; shift
             xcodebuild build-for-testing -project ci/Kit.xcodeproj -scheme Kit \
-              -destination 'generic/platform=iOS Simulator' -derivedDataPath ci/DD CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO \
+              -destination 'generic/platform=iOS Simulator' -derivedDataPath ci/DD COMPILER_INDEX_STORE_ENABLE=NO \
               "$@" > $log 2>&1 &
             local pid=$! last=0 same=0
             while kill -0 $pid 2>/dev/null; do
@@ -107,17 +108,10 @@ jobs:
           xcrun simctl boot "$SIM_UDID"
           xcrun simctl bootstatus "$SIM_UDID" -b > /dev/null
           echo "booted in $(( $(date +%s) - T0 ))s, at $(( $(date +%s) - JOB_T0 ))s"
-          bash ci/stub/make_cert.sh "$RUNNER_TEMP/cert" > $A/cert.txt 2>&1
           xcrun simctl keychain "$SIM_UDID" add-root-cert "$RUNNER_TEMP/cert/ca.pem"; echo "add-root-cert rc=$?"
           xcrun simctl status_bar "$SIM_UDID" override --time 9:41 > /dev/null 2>&1 || true
           xcrun simctl ui "$SIM_UDID" appearance light
-          nohup python3 -I ci/stub/stub_server.py --fixtures ci/stub/fixtures --cert "$RUNNER_TEMP/cert/chain.pem" \
-            --key "$RUNNER_TEMP/cert/server.key" --token kit-sim-invented-token-0001 --port 8443 \
-            --log "$GITHUB_WORKSPACE/$A/requests.jsonl" > $A/stub.out 2>&1 &
-          echo $! > "$RUNNER_TEMP/stub.pid"
-          for i in $(seq 1 20); do curl -s --max-time 3 --cacert "$RUNNER_TEMP/cert/ca.pem" -o /dev/null https://localhost:8443/ && break; sleep 0.5; done
-          curl -s --max-time 5 -o /dev/null -w 'stub health http=%{http_code}\n' --cacert "$RUNNER_TEMP/cert/ca.pem" -H "Authorization: Bearer kit-sim-invented-token-0001" https://localhost:8443/v1/health
-          rm -f "$A/requests.jsonl"
+          codesign -dv --entitlements - ci/DD/Build/Products/Debug-iphonesimulator/Kit.app 2>&1 | grep -vE "^(CDHash|Hash|CandidateCDHash)" | head -20
           echo "ready at $(( $(date +%s) - JOB_T0 ))s"
           true
 
@@ -126,6 +120,13 @@ jobs:
         run: |
           set +e
           A=ci/artifacts; mkdir -p $A/stall /tmp/kitctl /tmp/kitshots
+          health () { curl -s --max-time 5 -o /dev/null -w "stub health http=%{http_code} $1\n" --cacert "$RUNNER_TEMP/cert/ca.pem" -H "Authorization: Bearer kit-sim-invented-token-0001" https://localhost:8443/v1/health; }
+          nohup python3 -I ci/stub/stub_server.py --fixtures ci/stub/fixtures --cert "$RUNNER_TEMP/cert/chain.pem" \
+            --key "$RUNNER_TEMP/cert/server.key" --token kit-sim-invented-token-0001 --port 8443 \
+            --log "$GITHUB_WORKSPACE/$A/requests.jsonl" > $A/stub.out 2>&1 &
+          echo $! > "$RUNNER_TEMP/stub.pid"
+          for i in $(seq 1 20); do curl -s --max-time 3 --cacert "$RUNNER_TEMP/cert/ca.pem" -o /dev/null https://localhost:8443/ && break; sleep 0.5; done
+          health start; ps -o pid,command -p "$(cat "$RUNNER_TEMP/stub.pid")" | tail -1 | cut -c1-60
           rm -f /tmp/kitctl/* /tmp/kitshots/*
           XTR=$(ls ci/DD/Build/Products/*.xctestrun | head -1); echo "xctestrun=$XTR"
           LIMIT=$(( JOB_CAP_S - 100 ))
@@ -148,7 +149,7 @@ jobs:
                 stopstub) kill "$(cat "$RUNNER_TEMP/stub.pid")" ;;
                 revokemic) xcrun simctl privacy "$SIM_UDID" revoke microphone com.example.Chief ;;
               esac
-              echo "host did $req rc=$? at t=$i"; touch "/tmp/kitctl/$req-ok"
+              echo "host did $req rc=$? at t=$i"; touch "/tmp/kitctl/$req-ok"; health "after $req"
             done
             cur=$(grep -c "KIT \|t = " $A/test.log)
             if [ "$cur" = "$last" ]; then same=$((same+1)); else same=0; last=$cur; fi
@@ -160,6 +161,9 @@ jobs:
             fi
           done
           kill $PID 2>/dev/null; sleep 1; kill -9 $PID 2>/dev/null
+          health end
+          xcrun simctl spawn "$SIM_UDID" log show --last 15m --style compact --predicate 'process == "Kit"' 2>/dev/null \
+            | grep -iE "nsurl|tls|ssl|trust|connection|keychain|error|fail" | grep -v "token" | cut -c1-300 | tail -150 > $A/app-log.txt
           echo "test result: $(grep -E 'Test Case .*(passed|failed)' $A/test.log | tail -1)"
           grep "KIT " $A/test.log | grep -v " shot " | cut -c1-300
           echo "shots: $(ls /tmp/kitshots | wc -l), at $(( $(date +%s) - JOB_T0 ))s"
