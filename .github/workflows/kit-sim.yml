@@ -100,15 +100,23 @@ jobs:
           ls ci/DD/Build/Products/
 
       - name: Boot simulator, trust the throwaway CA, start the stub
-        timeout-minutes: 5
+        timeout-minutes: 9
         run: |
           set +e
           A=ci/artifacts; mkdir -p $A
           T0=$(date +%s)
+          # bounded () <seconds> <cmd...>: runs a command, kills it after the given time, returns its rc (124 on kill).
+          bounded () { local s=$1; shift; "$@" & local p=$!; ( sleep $s; kill $p 2>/dev/null ) & local w=$!; wait $p; local rc=$?; kill $w 2>/dev/null; return $rc; }
+          # Trust the throwaway CA before the boot if simctl allows it on a shut-down device (it hung after boot in an earlier run).
+          bounded 60 xcrun simctl keychain "$SIM_UDID" add-root-cert "$RUNNER_TEMP/cert/ca.pem"; PRE=$?
+          echo "add-root-cert before boot rc=$PRE after $(( $(date +%s) - T0 ))s"
           xcrun simctl boot "$SIM_UDID"
           xcrun simctl bootstatus "$SIM_UDID" -b > /dev/null
           echo "booted in $(( $(date +%s) - T0 ))s, at $(( $(date +%s) - JOB_T0 ))s"
-          xcrun simctl keychain "$SIM_UDID" add-root-cert "$RUNNER_TEMP/cert/ca.pem"; echo "add-root-cert rc=$?"
+          if [ $PRE -ne 0 ]; then
+            T1=$(date +%s); bounded 240 xcrun simctl keychain "$SIM_UDID" add-root-cert "$RUNNER_TEMP/cert/ca.pem"
+            echo "add-root-cert after boot rc=$? in $(( $(date +%s) - T1 ))s"
+          fi
           xcrun simctl status_bar "$SIM_UDID" override --time 9:41 > /dev/null 2>&1 || true
           xcrun simctl ui "$SIM_UDID" appearance light
           codesign -dv --entitlements - ci/DD/Build/Products/Debug-iphonesimulator/Kit.app 2>&1 | grep -vE "^(CDHash|Hash|CandidateCDHash)" | head -20
