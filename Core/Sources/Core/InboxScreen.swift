@@ -1,0 +1,190 @@
+import Foundation
+
+public enum ControlRole: Equatable, Sendable { case primary, normal, destructive }
+
+public enum ControlState: Equatable, Sendable { case idle, pending, failed }
+
+/// What a control does when tapped. Handles identify the proposal or question.
+public enum InboxAction: Equatable, Hashable, Sendable {
+    case approve(String)
+    case reject(String)
+    case openChange(String)
+    case sendChange(String)
+    case option(String, Int)
+    case sendAnswer(String)
+    case retry
+    case retryUpload
+    case pair
+    case undo
+    /// Corrections of a filed task or note.
+    case justAnIdea(String)
+    case itsATask(String)
+    case notThis(String)
+    case confirmRemove(String)
+    case cancelRemove(String)
+    case sendCorrection(String)
+    /// Today tab: task.done, task.reopen and waiting.close.
+    case markDone(String)
+    case reopen(String)
+    case closeWaiting(String)
+    /// Task sheet: drop with confirmation, and the "Move it" choices.
+    case dropTask(String)
+    case confirmDrop(String)
+    case cancelDrop(String)
+    case move(String, TaskMove)
+}
+
+/// The "Move it" choices of the task sheet.
+public enum TaskMove: Equatable, Hashable, Sendable { case today, tomorrow, nextWeek, later, pickDate }
+
+public struct InboxControl: Equatable, Sendable {
+    public var label: String
+    public var role: ControlRole
+    public var isEnabled: Bool
+    public var disabledReason: String?
+    public var state: ControlState
+    public var action: InboxAction
+}
+
+public struct InboxTextField: Equatable, Sendable {
+    public var text: String
+    public var handle: String
+    public var placeholder: String
+}
+
+public enum InboxElement: Equatable, Sendable {
+    case control(InboxControl)
+    case gap
+    case textField(InboxTextField)
+}
+
+public struct InboxScreenRow: Equatable, Sendable {
+    public var kicker: String?
+    public var text: String
+    public var because: String?
+    public var handle: String?
+    public var state: DecisionState?
+    public var elements: [InboxElement] = []
+    /// Secondary line of a recent capture, and its index in `InboxModel.recent`.
+    public var status: String?
+    public var recentIndex: Int?
+    public var lineLimit: Int? = 3
+    public var displayedBecause: String? { kicker == "Kit suggests" ? quotedBecause : because }
+    public var quotedBecause: String? { because.map { "You said: “" + $0 + "”" } }
+    public var sourceCaptureId: String?
+    public var sourceLabel: String { "Source capture" }
+    public var openCaptureLabel: String { "Open capture" }
+    public var stacksControls: Bool { true }
+    public var whenText: String?
+    public var filedItems: [CapturePreview] = []
+    public var moreText: String?
+    /// "Queued as <action>" for an approved suggestion that has an action.
+    public var queuedLine: String?
+    public var waitLine: String?
+
+    public var controls: [InboxControl] {
+        elements.compactMap { if case .control(let control) = $0 { return control } else { return nil } }
+    }
+
+    public var textField: InboxTextField? {
+        elements.compactMap { if case .textField(let field) = $0 { return field } else { return nil } }.first
+    }
+
+    public var stateCaption: String? {
+        switch state {
+        case .pending: return "Sending"
+        case .failed: return "Did not go through"
+        case .confirmed: return "Done"
+        case nil: return nil
+        }
+    }
+}
+
+public struct CapturePreview: Equatable, Sendable {
+    public var handle: String
+    public var text: String
+    public var label: String
+}
+
+public struct InboxSection: Equatable, Sendable {
+    public var count: Int? = nil
+    public var headingText: String { count.map { title + " " + String($0) } ?? title }
+    public var title: String
+    public var rows: [InboxScreenRow]
+}
+
+/// Text the user is typing, keyed by proposal or question handle.
+public struct InboxDrafts: Equatable, Sendable {
+    public var changeOpen: Set<String> = []
+    public var texts: [String: String] = [:]
+
+    public init(changeOpen: Set<String> = [], texts: [String: String] = [:]) {
+        self.changeOpen = changeOpen
+        self.texts = texts
+    }
+
+    /// The drafts after `action` has been tapped.
+    public func after(_ action: InboxAction) -> InboxDrafts {
+        var next = self
+        switch action {
+        case .openChange(let handle):
+            if next.changeOpen.contains(handle) { next.changeOpen.remove(handle) } else { next.changeOpen.insert(handle) }
+        case .sendChange(let handle):
+            next.changeOpen.remove(handle)
+            next.texts[handle] = nil
+        case .sendAnswer(let handle), .sendCorrection(let handle):
+            next.texts[handle] = nil
+        default: break
+        }
+        return next
+    }
+}
+
+/// Everything the Inbox shows, as plain values. The views render this and nothing else.
+@MainActor
+public struct InboxScreen {
+    public var title: String { "Inbox" }
+    public var pairControl: InboxControl? {
+        guard inbox.offersPairing else { return nil }
+        return InboxControl(label: "Pair", role: .primary, isEnabled: true, state: .idle, action: .pair)
+    }
+    public var needsYouCount: Int { inbox.needsYouCount }
+    public var uploadNotice: String? { inbox.uploader?.removedNotices.last }
+    public let sections: [InboxSection]
+    /// The offline reason, once, while decisions are blocked.
+    public let notice: String?
+    public let undo: InboxControl?
+    public let updatedText: String
+    public let infoNotice: String?
+    public let emptyText: String?
+    public let message: String?
+    /// Kit's line after a confirmed command.
+    public let kitLine: String?
+    /// Shown when a snapshot is loaded and nothing is under "Needs you".
+    public let needsYouEmptyText: String?
+
+    public static let needsYouEmpty = "Nothing needs you. Enjoy it while it lasts."
+
+    let inbox: InboxModel
+    let decisions: DecisionModel
+
+    public var allControls: [InboxControl] {
+        sections.flatMap { $0.rows }.flatMap { $0.controls } + (undo.map { [$0] } ?? [])
+    }
+
+    public init(inbox: InboxModel, decisions: DecisionModel, drafts: InboxDrafts = InboxDrafts()) {
+        self.inbox = inbox
+        self.decisions = decisions
+        let builder = InboxRowBuilder(decisions: decisions, drafts: drafts)
+        sections = builder.sections(inbox: inbox)
+        notice = decisions.cannotDecideReason
+        undo = builder.undoControl()
+        updatedText = inbox.lastUpdatedText
+        infoNotice = inbox.notice
+        emptyText = inbox.emptyStateText
+        message = decisions.message
+        kitLine = decisions.kitLine
+        let needsYou = sections.contains { $0.title == "Needs you" }
+        needsYouEmptyText = inbox.snapshot != nil && !needsYou ? Self.needsYouEmpty : nil
+    }
+}

@@ -1,0 +1,20 @@
+{
+  "A-1112-6|result": {
+    "handle": "A-1112-6",
+    "part": "result",
+    "title": "Swimming pool monthly pass price",
+    "markdown": "## A-1112-6 · Swimming pool monthly pass price\n\nA monthly pass costs 32 euros; off-peak passes are cheaper.\n\n- Adult monthly: 32 euros\n- Off-peak monthly: 24 euros\n- Ten swims: 45 euros\n\nPrices checked on the pool's own price list.\n"
+  },
+  "A-1113-2|result": {
+    "handle": "A-1113-2",
+    "part": "result",
+    "title": "Notes for the boiler service visit",
+    "markdown": "## A-1113-2 · Notes for the boiler service visit\n\nThree things to raise with the engineer:\n\n- The pressure drops every few weeks\n- The radiator in the hall stays cold\n- Ask for the service certificate by email\n"
+  },
+  "A-1113-2|draft": {
+    "handle": "A-1113-2",
+    "part": "draft",
+    "title": "Notes for the boiler service visit",
+    "markdown": "## Draft message to the landlord\n\nHello, could you tell me the date of the boiler service this month? Thank you.\n"
+  }
+}

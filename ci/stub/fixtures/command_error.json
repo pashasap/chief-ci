@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "stale",
+    "message": "The line changed since the app read it"
+  }
+}

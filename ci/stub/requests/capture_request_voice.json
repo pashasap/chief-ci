@@ -1,0 +1,14 @@
+{
+  "client_id": "5b0e7a6e-2c8d-4a55-9a43-0d6c1f3f7b21",
+  "recorded_at": "2026-11-13T13:02:11Z",
+  "kind": "voice",
+  "duration_s": 42,
+  "text": "Remind me next week to book the car in for winter tyres.",
+  "transcriber": "speech",
+  "locale": "en-US",
+  "has_audio": true,
+  "alt": {
+    "transcriber": "dictation",
+    "text": "Remind me next week to book the car in for winter tires."
+  }
+}
