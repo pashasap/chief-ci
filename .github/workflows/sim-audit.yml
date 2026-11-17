@@ -2,6 +2,9 @@ name: Kit bounded simulator audit
 
 # Public CI-only repository: standard GitHub-hosted runner only (never a -large/-xlarge label, which is billed).
 on:
+  push:
+    branches: [ci/chief-sim-20261117]
+    paths: ['.github/workflows/sim-audit.yml']
   workflow_dispatch:
     inputs:
       device:
