@@ -156,12 +156,10 @@ jobs:
           NSUnbufferedIO=YES xcodebuild test-without-building -xctestrun "$XTR" \
             -destination "platform=iOS Simulator,id=$SIM_UDID" \
             -only-testing:KitUITests/KitUITests/testScreens > $A/test.log 2>&1 &
-          PID=$!; last=""; same=0; done_at=0; i=0
+          PID=$!; last=""; same=0; i=0; CUTOFF=0
           while kill -0 $PID 2>/dev/null; do
             sleep 1; i=$((i+1))
-            if [ $(( $(date +%s) - JOB_T0 )) -gt $LIMIT ]; then echo "JOB CUTOFF at t=$i"; xcrun simctl io "$SIM_UDID" screenshot $A/stall/cutoff.png > /dev/null 2>&1; break; fi
-            if [ $done_at -eq 0 ] && grep -qE "Test Case .*(passed|failed)" $A/test.log; then done_at=$i; fi
-            if [ $done_at -gt 0 ] && [ $((i - done_at)) -ge 8 ]; then echo "test finished; stopping lingering xcodebuild"; break; fi
+            if [ $(( $(date +%s) - JOB_T0 )) -gt $LIMIT ]; then CUTOFF=1; echo "JOB CUTOFF at t=$i"; xcrun simctl io "$SIM_UDID" screenshot $A/stall/cutoff.png > /dev/null 2>&1; break; fi
             for req in $(grep -oE "REQUEST [a-z]+$" $A/test.log | awk '{print $2}' | sort -u); do
               [ -f "/tmp/kitctl/$req-ok" ] && continue
               case $req in
@@ -182,14 +180,11 @@ jobs:
               [ -n "$APP" ] && sample "$APP" 2 -file $A/stall/t$i-sample.txt > /dev/null 2>&1
             fi
           done
-          kill $PID 2>/dev/null; sleep 1; kill -9 $PID 2>/dev/null
-          health end
-          xcrun simctl spawn "$SIM_UDID" log show --last 15m --style compact --predicate 'process == "Kit"' 2>/dev/null \
-            | grep -iE "nsurl|tls|ssl|trust|connection|keychain|error|fail" | grep -v "token" | cut -c1-300 | tail -150 > $A/app-log.txt
-          echo "test result: $(grep -E 'Test Case .*(passed|failed)' $A/test.log | tail -1)"
-          grep "KIT " $A/test.log | grep -v " shot " | cut -c1-300
-          echo "shots: $(ls /tmp/kitshots | wc -l), at $(( $(date +%s) - JOB_T0 ))s"
-          true
+          if [ "$CUTOFF" -ne 0 ]; then
+            kill "$PID" 2>/dev/null; sleep 1; kill -9 "$PID" 2>/dev/null
+          fi
+          wait "$PID"; TEST_RC=$?
+          bash ci/check-test-result.sh "$A/test.log" "$TEST_RC" "$CUTOFF"
 
       - name: Collect (even after a timeout)
         if: always()
@@ -198,6 +193,11 @@ jobs:
           set +e
           A=ci/artifacts; mkdir -p $A/shots
           cp /tmp/kitshots/*.png $A/shots/ 2>/dev/null
+          xcrun simctl spawn "$SIM_UDID" log show --last 15m --style compact --predicate 'process == "Kit"' 2>/dev/null \
+            | grep -iE "nsurl|tls|ssl|trust|connection|keychain|error|fail" | grep -v "token" | cut -c1-300 | tail -150 > $A/app-log.txt
+          echo "test result: $(grep -E 'Test Case .*(passed|failed)' $A/test.log | tail -1)"
+          grep "KIT " $A/test.log | grep -v " shot " | cut -c1-300
+          echo "shots: $(ls /tmp/kitshots | wc -l), at $(( $(date +%s) - JOB_T0 ))s"
           ls $A/shots | wc -l
           ls ~/Library/Logs/DiagnosticReports 2>/dev/null | grep -i kit > $A/crash-reports.txt
           cp ~/Library/Logs/DiagnosticReports/Kit*.ips $A/stall/ 2>/dev/null
