@@ -79,7 +79,8 @@ final class KitUITests: XCTestCase {
         }
 
         step("04 open a recent capture and one filed item") {
-            let row = element(app, "Pick up the dry cleaning today")
+            let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Pick up the dry cleaning today")).firstMatch
+            toTop(app)
             if scrollTo(app, row) {
                 row.tap()
                 note("capture sheet=\(app.navigationBars["Capture"].waitForExistence(timeout: 8))")
@@ -165,12 +166,11 @@ final class KitUITests: XCTestCase {
                 task.tap(); sleep(2)
                 shot("18-task-sheet")
                 dump(app, "task-sheet")
-                let move = app.buttons["Move it"].firstMatch
-                if move.exists {
-                    move.tap(); sleep(1); shot("19-task-sheet-move")
-                    let tomorrow = app.buttons["Tomorrow"].firstMatch
-                    if tomorrow.exists { tomorrow.tap(); sleep(2); shot("20-after-move-tomorrow") }
-                }
+                let tomorrow = app.buttons["Tomorrow"].firstMatch
+                if scrollTo(app, tomorrow) {
+                    shot("19-task-sheet-move")
+                    tomorrow.tap(); sleep(2); shot("20-after-move-tomorrow")
+                } else { note("Tomorrow not hittable"); shot("19-task-move-missing") }
                 if app.navigationBars.buttons["Done"].exists { app.navigationBars.buttons["Done"].tap() } else { app.swipeDown(velocity: .fast) }
                 sleep(1)
                 shot("21-today-after-move")
@@ -196,7 +196,13 @@ final class KitUITests: XCTestCase {
                 let share = app.buttons["Share"].firstMatch
                 note("share exists=\(share.exists) enabled=\(share.exists && share.isEnabled)")
                 if share.exists && share.isEnabled {
-                    share.tap(); sleep(3); shot("26-share-sheet")
+                    share.tap()
+                    let activity = app.otherElements["ActivityListView"]
+                    let close = app.buttons["Close"].firstMatch
+                    let ready = activity.waitForExistence(timeout: 12) || close.waitForExistence(timeout: 3)
+                    note("share sheet ready=\(ready)")
+                    sleep(2); shot("26-share-sheet")
+                    dump(app, "share-sheet")
                     app.swipeDown(velocity: .fast); sleep(1)
                     if app.buttons["Close"].exists { app.buttons["Close"].firstMatch.tap(); sleep(1) }
                 }
@@ -322,14 +328,24 @@ final class KitUITests: XCTestCase {
             if app.buttons["Check server"].exists { app.buttons["Check server"].tap(); sleep(4) }
             shot("75-offline-settings")
         }
+        step("16 landscape cached screens") {
+            XCUIDevice.shared.orientation = .landscapeLeft
+            sleep(2)
+            tab(app, "Inbox"); toTop(app); shot("80-landscape-inbox"); frames(app, ["Record a capture", "Inbox", "Today", "Settings"])
+            tab(app, "Today"); shot("81-landscape-today")
+            tab(app, "Brief"); shot("82-landscape-brief")
+            tab(app, "Settings"); shot("83-landscape-settings")
+            XCUIDevice.shared.orientation = .portrait
+        }
         note("DONE")
     }
 
     // MARK: - Helpers
 
     @MainActor private func step(_ name: String, _ body: () -> Void) {
-        note("STEP \(name)")
+        note("AUDIT begin \(name)")
         XCTContext.runActivity(named: name) { _ in body() }
+        note("AUDIT stop \(name)")
     }
 
     /// Bottom bar buttons: the Inbox one reads "Inbox, N need you" when something waits, so match by prefix.
