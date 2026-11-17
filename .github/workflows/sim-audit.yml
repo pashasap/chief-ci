@@ -1,9 +1,15 @@
 name: Kit bounded simulator audit
 
 # Public CI-only repository: standard GitHub-hosted runner only (never a -large/-xlarge label, which is billed).
+#
+# Two stop groups, each its own step with its own timeout and its own artifact upload, XL/offline/landscape first
+# so the night's evidence cannot be the part a later timeout loses (F-61f096). Each group step reports its real
+# status and the job is only green when every executed group passed (F-327ab0).
 on:
   push:
-    branches: [ci/chief-sim-20261117]
+    # Registration only: a workflow that exists only on a side branch is not listed for workflow_dispatch until it
+    # has one run of its own. The push job does nothing but echo, so pushing this file never burns simulator time.
+    branches: [ci/night-1118-harness]
     paths: ['.github/workflows/sim-audit.yml']
   workflow_dispatch:
     inputs:
@@ -12,29 +18,48 @@ on:
         type: choice
         options: [phone, tablet]
         default: phone
+      group:
+        description: Stop group
+        type: choice
+        options: [all, xl, light]
+        default: all
 
 concurrency:
-  group: chief-sim-20261117-${{ github.workflow }}-${{ github.ref }}
+  group: night-1118-harness-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 env:
-  JOB_CAP_S: "1200"
+  # Sum of the step timeouts below (4+9+4+12+15+2 min = 2760s) fits this cap, which fits the 50-minute job cap:
+  # even if every step is cut at its own limit, the job still ends with its verdict step run.
+  JOB_CAP_S: "2820"
   AUDIT_DEVICE: ${{ inputs.device || 'phone' }}
+  AUDIT_GROUP: ${{ inputs.group || 'all' }}
 
 jobs:
+  register:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Registration only (no simulator, no Xcode)
+        run: echo "sim-audit.yml registered for workflow_dispatch on $GITHUB_REF; the audit runs only on dispatch"
+
   kit-sim:
+    if: github.event_name == 'workflow_dispatch'
     # Standard (non-xlarge) label of the runner-images "Xcode 27" arm64 image (public preview), which ships
     # Xcode 27.0/27.1/27.2 and the iOS 27.0/27.1/27.2 simulator runtimes.
     runs-on: xcode-27
-    timeout-minutes: 20
+    # Step timeouts (4+9+4+12+15+2 = 46 min) fit inside this 50-minute cap, and the group budgets (660s + 780s)
+    # fit inside JOB_CAP_S once the setup, build and boot limits are subtracted.
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
 
       - name: Xcode and simulator choice (no boot yet)
-        timeout-minutes: 3
+        timeout-minutes: 4
         run: |
           set -euo pipefail
           echo "JOB_T0=$(date +%s)" >> "$GITHUB_ENV"
@@ -112,9 +137,10 @@ jobs:
           grep -E '\.swift:[0-9]+:[0-9]+: warning:' $A/build.log | sed -E 's#^.*/(Core|Sources|ci)/#\1/#' | sort -u | head -30
           /usr/libexec/PlistBuddy -c 'Print' ci/DD/Build/Products/Debug-iphonesimulator/Kit.app/Info.plist | grep -E "CFBundle(DisplayName|Identifier|URLSchemes)|chief|MinimumOS|Microphone|Speech" || true
           ls ci/DD/Build/Products/
+          ls ci/DD/Build/Products/*.xctestrun > /dev/null 2>&1 || { echo "no xctestrun produced"; exit 1; }
 
-      - name: Boot simulator, trust the throwaway CA, start the stub
-        timeout-minutes: 9
+      - name: Boot simulator and trust the throwaway CA
+        timeout-minutes: 4
         run: |
           set +e
           A=ci/artifacts; mkdir -p $A
@@ -133,91 +159,80 @@ jobs:
           fi
           xcrun simctl status_bar "$SIM_UDID" override --time 9:41 > /dev/null 2>&1 || true
           xcrun simctl ui "$SIM_UDID" appearance light
-          codesign -dv --entitlements - ci/DD/Build/Products/Debug-iphonesimulator/Kit.app 2>&1 | grep -vE "^(CDHash|Hash|CandidateCDHash)" | head -20
           echo "ready at $(( $(date +%s) - JOB_T0 ))s"
           true
 
-      - name: UI test with host helper and stall watchdog
+      # ---- group 1: XL, offline, landscape (first, so its evidence survives any later failure) ----------------
+      - name: Group XL/offline/landscape (own timeout, own artifacts)
+        id: xl
+        if: ${{ github.event_name == 'workflow_dispatch' && (env.AUDIT_GROUP == 'all' || env.AUDIT_GROUP == 'xl') }}
         timeout-minutes: 12
-        run: |
-          set +e
-          A=ci/artifacts; mkdir -p $A/stall /tmp/kitctl /tmp/kitshots
-          health () { curl -s --max-time 5 -o /dev/null -w "stub health http=%{http_code} $1\n" --cacert "$RUNNER_TEMP/cert/ca.pem" -H "Authorization: Bearer kit-sim-invented-token-0001" https://localhost:8443/v1/health; }
-          nohup python3 -I ci/stub/stub_server.py --fixtures ci/stub/fixtures --cert "$RUNNER_TEMP/cert/chain.pem" \
-            --key "$RUNNER_TEMP/cert/server.key" --token kit-sim-invented-token-0001 --port 8443 \
-            --log "$GITHUB_WORKSPACE/$A/requests.jsonl" > $A/stub.out 2>&1 &
-          echo $! > "$RUNNER_TEMP/stub.pid"
-          for i in $(seq 1 20); do curl -s --max-time 3 --cacert "$RUNNER_TEMP/cert/ca.pem" -o /dev/null https://localhost:8443/ && break; sleep 0.5; done
-          health start; ps -o pid,command -p "$(cat "$RUNNER_TEMP/stub.pid")" | tail -1 | cut -c1-60
-          rm -f /tmp/kitctl/* /tmp/kitshots/*
-          XTR=$(ls ci/DD/Build/Products/*.xctestrun | head -1); echo "xctestrun=$XTR"
-          LIMIT=$(( JOB_CAP_S - 200 ))
-          echo "test starts at $(( $(date +%s) - JOB_T0 ))s, cut-off at ${LIMIT}s"
-          NSUnbufferedIO=YES xcodebuild test-without-building -xctestrun "$XTR" \
-            -destination "platform=iOS Simulator,id=$SIM_UDID" \
-            -only-testing:KitUITests/KitUITests/testScreens > $A/test.log 2>&1 &
-          PID=$!; last=""; same=0; done_at=0; i=0
-          while kill -0 $PID 2>/dev/null; do
-            sleep 1; i=$((i+1))
-            if [ $(( $(date +%s) - JOB_T0 )) -gt $LIMIT ]; then echo "JOB CUTOFF at t=$i"; xcrun simctl io "$SIM_UDID" screenshot $A/stall/cutoff.png > /dev/null 2>&1; break; fi
-            if [ $done_at -eq 0 ] && grep -qE "Test Case .*(passed|failed)" $A/test.log; then done_at=$i; fi
-            if [ $done_at -gt 0 ] && [ $((i - done_at)) -ge 8 ]; then echo "test finished; stopping lingering xcodebuild"; break; fi
-            for req in $(grep -oE "REQUEST [a-z]+$" $A/test.log | awk '{print $2}' | sort -u); do
-              [ -f "/tmp/kitctl/$req-ok" ] && continue
-              case $req in
-                openurl) xcrun simctl openurl "$SIM_UDID" "chief://pair?base=https%3A%2F%2Flocalhost%3A8443&token=kit-sim-invented-token-0001" ;;
-                dark) xcrun simctl ui "$SIM_UDID" appearance dark ;;
-                light) xcrun simctl ui "$SIM_UDID" appearance light ;;
-                stopstub) kill "$(cat "$RUNNER_TEMP/stub.pid")" ;;
-                revokemic) xcrun simctl privacy "$SIM_UDID" revoke microphone com.example.Chief ;;
-              esac
-              echo "host did $req rc=$? at t=$i"; touch "/tmp/kitctl/$req-ok"; health "after $req"
-            done
-            cur=$(grep -c "KIT \|t = " $A/test.log)
-            if [ "$cur" = "$last" ]; then same=$((same+1)); else same=0; last=$cur; fi
-            if [ $same -eq 30 ]; then
-              APP=$(pgrep -f "Kit.app/Kit" | head -1)
-              echo "STALL? t=$i app=${APP:-none} last=$(grep 'KIT ' $A/test.log | tail -1 | cut -c1-200)" | tee -a $A/stall/watch.txt
-              xcrun simctl io "$SIM_UDID" screenshot $A/stall/t$i.png > /dev/null 2>&1
-              [ -n "$APP" ] && sample "$APP" 2 -file $A/stall/t$i-sample.txt > /dev/null 2>&1
-            fi
-          done
-          kill $PID 2>/dev/null; sleep 1; kill -9 $PID 2>/dev/null
-          health end
-          xcrun simctl spawn "$SIM_UDID" log show --last 15m --style compact --predicate 'process == "Kit"' 2>/dev/null \
-            | grep -iE "nsurl|tls|ssl|trust|connection|keychain|error|fail" | grep -v "token" | cut -c1-300 | tail -150 > $A/app-log.txt
-          echo "test result: $(grep -E 'Test Case .*(passed|failed)' $A/test.log | tail -1)"
-          grep "KIT " $A/test.log | grep -v " shot " | cut -c1-300
-          echo "shots: $(ls /tmp/kitshots | wc -l), at $(( $(date +%s) - JOB_T0 ))s"
-          true
+        continue-on-error: true
+        env:
+          GROUP_BUDGET_S: "660"
+          # Floor, not a target: the group logs ~39 shots when the app behaves and its fallback paths are not taken.
+          MIN_SHOTS: "30"
+        run: bash ci/UITests/group_runner.sh xl
 
-      - name: Collect (even after a timeout)
+      - name: Upload XL/offline/landscape artifacts
+        if: ${{ always() && steps.xl.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: kit-sim-xl
+          retention-days: 3
+          if-no-files-found: error
+          path: |
+            ci/artifacts/device.txt
+            ci/artifacts/cert.txt
+            ci/artifacts/build.log
+            ci/artifacts/requests.jsonl
+            ci/artifacts/xl/**
+
+      # ---- group 2: light-mode actions, sheets, Share, dark ------------------------------------------------
+      - name: Group light/actions (own timeout, own artifacts)
+        id: light
+        if: ${{ github.event_name == 'workflow_dispatch' && (env.AUDIT_GROUP == 'all' || env.AUDIT_GROUP == 'light') }}
+        timeout-minutes: 15
+        continue-on-error: true
+        env:
+          GROUP_BUDGET_S: "780"
+          # Floor, not a target: ~45 shots when the app behaves; about six of the named shots are fallback branches.
+          MIN_SHOTS: "36"
+        run: bash ci/UITests/group_runner.sh light
+
+      - name: Upload light/actions artifacts
+        if: ${{ always() && steps.light.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: kit-sim-light
+          retention-days: 3
+          if-no-files-found: error
+          path: |
+            ci/artifacts/device.txt
+            ci/artifacts/requests.jsonl
+            ci/artifacts/light/**
+
+      # ---- verdict: the only place that decides the job's colour ------------------------------------------
+      - name: Verdict (a failed or missing group makes the job red)
         if: always()
-        timeout-minutes: 3
+        timeout-minutes: 2
         run: |
           set +e
-          A=ci/artifacts; mkdir -p $A/shots
-          cp /tmp/kitshots/*.png $A/shots/ 2>/dev/null
-          ls $A/shots | wc -l
-          ls ~/Library/Logs/DiagnosticReports 2>/dev/null | grep -i kit > $A/crash-reports.txt
-          cp ~/Library/Logs/DiagnosticReports/Kit*.ips $A/stall/ 2>/dev/null
+          A=ci/artifacts
+          XL="${{ steps.xl.outcome }}"; LI="${{ steps.light.outcome }}"
+          echo "group outcomes: xl=$XL light=$LI group=$AUDIT_GROUP"
+          FAIL=0; RAN=0
+          for g in xl light; do
+            case "$g" in xl) O=$XL;; light) O=$LI;; esac
+            [ "$O" = "skipped" ] && { echo "GROUP_SKIPPED $g"; continue; }
+            RAN=$((RAN+1))
+            [ -f "$A/$g/summary.txt" ] && cat "$A/$g/summary.txt"
+            if [ "$O" != "success" ]; then echo "GROUP_FAILED $g outcome=$O"; FAIL=1; fi
+          done
+          if [ "$RAN" -eq 0 ]; then echo "no group ran"; FAIL=1; fi
+          for f in $A/xl/inventory.txt $A/light/inventory.txt; do [ -f "$f" ] && { echo "--- $f"; cat "$f"; }; done
           echo "requests: $(wc -l < $A/requests.jsonl 2>/dev/null)"
           python3 -c "import json,sys; [print(e.get('method'), e.get('path'), e.get('status'), e.get('note','')) for e in map(json.loads, open(sys.argv[1]))]" $A/requests.jsonl 2>/dev/null | uniq -c | head -80
           xcrun simctl shutdown "$SIM_UDID" || true
           echo "total elapsed=$(( $(date +%s) - JOB_T0 ))s"
-          true
-
-      - name: Upload
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: kit-sim-artifacts
-          retention-days: 3
-          if-no-files-found: ignore
-          path: |
-            ci/artifacts/*.log
-            ci/artifacts/*.txt
-            ci/artifacts/*.jsonl
-            ci/artifacts/stub.out
-            ci/artifacts/stall/**
-            ci/artifacts/shots/**
+          exit $FAIL
