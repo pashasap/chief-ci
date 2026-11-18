@@ -93,11 +93,20 @@ struct RootView: View {
         Task { await environment.recording.start() }
     }
 
-    private func bottomBar(selected: AppTab, layout: RecordingPanelLayout) -> some View {
+    @ViewBuilder private func bottomBar(selected: AppTab, layout: RecordingPanelLayout) -> some View {
         let availability: RecordAvailability = environment.recording.recordAvailability
         let screen = BottomBarScreen(inboxCount: environment.inbox.needsYouCount,
             availability: availability).presented(in: layout)
-        return HStack(alignment: .top, spacing: 4) {
+        if screen.usesCompactSizing {
+            // Bound the fixed navigation chrome, not the Dynamic Type of the screen above it.
+            barRow(selected, screen).dynamicTypeSize(...DynamicTypeSize.large)
+        } else {
+            barRow(selected, screen)
+        }
+    }
+
+    private func barRow(_ selected: AppTab, _ screen: BottomBarScreen) -> some View {
+        HStack(alignment: .top, spacing: 4) {
             ForEach(screen.items, id: \.kind) { item in
                 if item.raised {
                     barButton(item, selected: selected, screen: screen)
@@ -125,12 +134,7 @@ struct RootView: View {
                         Image(systemName: item.symbol)
                         if item.reservesBadgeSpace || item.badge != nil { badgeSlot(item.badge) }
                     }
-                    Text(item.label)
-                        .font(.caption)
-                        .lineLimit(item.labelLineLimit)
-                        .minimumScaleFactor(screen.scalableText ? 0.65 : 1)
-                        .multilineTextAlignment(.center)
-                        .wrapping()
+                    tabLabel(item, screen)
                 }
                 .foregroundStyle(isSelected(item.kind, selected) ? Theme.accent : Theme.secondaryText)
                 .frame(minWidth: item.minimumWidth, minHeight: item.minimumHeight,
@@ -139,6 +143,19 @@ struct RootView: View {
         }
         .disabled(!item.isEnabled)
         .accessibilityLabel(item.accessibilityLabel)
+    }
+
+    @ViewBuilder private func tabLabel(_ item: BottomBarItem, _ screen: BottomBarScreen) -> some View {
+        let label = Text(item.label)
+            .font(.caption)
+            .lineLimit(item.labelLineLimit)
+            .minimumScaleFactor(screen.scalableText ? 0.65 : 1)
+            .multilineTextAlignment(.center)
+        if screen.usesCompactSizing {
+            label.fixedSize(horizontal: true, vertical: false)
+        } else {
+            label.wrapping()
+        }
     }
 
     @ViewBuilder private func badgeSlot(_ badge: String?) -> some View {

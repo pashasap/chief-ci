@@ -57,6 +57,7 @@ public struct BottomBarScreen {
     public private(set) var items: [BottomBarItem]
     public private(set) var scalableText = true
     public private(set) var wrapsWholeWords = true
+    public private(set) var usesCompactSizing = false
 
     /// The slots that are tabs. Record is a button, not a tab.
     public var tabs: [BottomBarItem] { items.filter { $0.kind != .record } }
@@ -67,6 +68,7 @@ public struct BottomBarScreen {
         var copy = self
         copy.scalableText = true
         copy.wrapsWholeWords = true
+        copy.usesCompactSizing = layout.largestText
         copy.items = items.map { item in
             var updated = item
             if !updated.raised {

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import Core
 
 /// Renders the Core `TodayScreen` description and nothing else.
@@ -73,37 +74,18 @@ struct TodayView: View {
     }
 
     @ViewBuilder private func segmentSelector(_ segments: [TodaySegment], _ screen: TodayScreen) -> some View {
-        if textSize.isAccessibilitySize && screen.scalableText {
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
-                    segmentButton(segment, index: index, screen: screen)
-                }
+        if screen.scalableText && screen.scrollsSegmentSelector {
+            ScrollView(.horizontal) {
+                AccessibleTodaySegments(segments: segments, label: screen.segmentLabel, select: screen.selectSegment)
             }
         } else {
             Picker(screen.segmentLabel, selection: Binding(get: { selected }, set: { screen.selectSegment($0) })) {
                 ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
-                    Text(segment.label).tag(index)
+                    Text(segment.label).lineLimit(segment.lineLimit).tag(index)
                 }
             }
             .pickerStyle(.segmented)
         }
-    }
-
-    private func segmentButton(_ segment: TodaySegment, index: Int, screen: TodayScreen) -> some View {
-        Button {
-            screen.selectSegment(index)
-        } label: {
-            Text(segment.label)
-                .lineLimit(segment.lineLimit)
-                .wrapping()
-                .frame(maxWidth: .infinity, minHeight: segment.minimumHeight, alignment: .leading)
-        }
-        .buttonStyle(.borderedProminent)
-        .tint(segment.isSelected ? Theme.accent : Theme.card)
-        .foregroundStyle(segment.isSelected ? Theme.recordText : Theme.text)
-        .frame(minWidth: segment.minimumWidth, minHeight: segment.minimumHeight)
-        .accessibilityLabel(segment.accessibilityLabel)
-        .accessibilityAddTraits(segment.isSelected ? .isSelected : [])
     }
 
     @ViewBuilder private func notes(_ screen: TodayScreen) -> some View {
@@ -178,6 +160,55 @@ struct TodayView: View {
         guard screen.bar != nil else { return }
         try? await Task.sleep(for: .seconds(DecisionModel.undoWindow + 0.1))
         now = Date()
+    }
+}
+
+/// A native segmented control keeps the accessibility hierarchy while its titles grow with Dynamic Type.
+private struct AccessibleTodaySegments: UIViewRepresentable {
+    let segments: [TodaySegment]
+    let label: String
+    let select: (Int) -> Void
+    @ScaledMetric(relativeTo: .subheadline) private var pointSize: CGFloat = 15
+
+    private var font: UIFont { .systemFont(ofSize: pointSize, weight: .medium) }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UISegmentedControl {
+        let control = UISegmentedControl(items: segments.map(\.accessibilityLabel))
+        control.accessibilityLabel = label
+        control.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .valueChanged)
+        return control
+    }
+
+    func updateUIView(_ control: UISegmentedControl, context: Context) {
+        context.coordinator.select = select
+        control.setTitleTextAttributes([.font: font], for: .normal)
+        control.setTitleTextAttributes([.font: font], for: .selected)
+        for (index, segment) in segments.enumerated() {
+            if control.titleForSegment(at: index) != segment.accessibilityLabel {
+                control.setTitle(segment.accessibilityLabel, forSegmentAt: index)
+            }
+            control.setWidth(width(for: segment), forSegmentAt: index)
+        }
+        control.selectedSegmentIndex = segments.firstIndex(where: \.isSelected) ?? UISegmentedControl.noSegment
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UISegmentedControl, context: Context) -> CGSize? {
+        let width = segments.reduce(CGFloat.zero) { $0 + self.width(for: $1) }
+        let minimumHeight = segments.map(\.minimumHeight).max() ?? 44
+        return CGSize(width: width, height: max(minimumHeight, ceil(font.lineHeight) + 20))
+    }
+
+    private func width(for segment: TodaySegment) -> CGFloat {
+        let labelWidth = (segment.accessibilityLabel as NSString).size(withAttributes: [.font: font]).width
+        return max(segment.minimumWidth, ceil(labelWidth) + 28)
+    }
+
+    @MainActor final class Coordinator: NSObject {
+        var select: (Int) -> Void = { _ in }
+
+        @objc func changed(_ control: UISegmentedControl) { select(control.selectedSegmentIndex) }
     }
 }
 

@@ -79,6 +79,7 @@ public struct TodayScreen {
     }
 
     public var segmentLabel: String { "Segment" }
+    public var scrollsSegmentSelector: Bool { layout?.largestText == true }
     public var updatedText: String { model.inbox.lastUpdatedText }
 
     public var header: String {
