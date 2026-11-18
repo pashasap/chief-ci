@@ -148,13 +148,18 @@ pairing () {
 }
 
 do_request () {
-  local req=$1 verdict store checkpoint rc=0
+  local req=$1 verdict store checkpoint probe rc=0
   case "$req" in
-    cacheonline|cacheoffline)
-      if [ "$req" = cacheoffline ] && { [ ! -f "$CTL/stopstub-ok" ] || health offline-check; }; then
-        rc=1
-        echo 'offline check failed: stub was not stopped or endpoint is reachable' >> "$A/record-cache.txt"
-      else
+    cacheonline|cachefreeze|cacheoffline)
+      if [ "$req" != cacheonline ]; then
+        probe=$(health offline-check)
+        printf '%s %s\n' "$req" "$probe" >> "$A/record-cache.txt"
+        if [ ! -f "$CTL/stopstub-ok" ] || [ "$probe" != 'stub health http=000 offline-check' ]; then
+          rc=1
+          echo 'offline check failed: verified stub stop and no HTTP answer are required' >> "$A/record-cache.txt"
+        fi
+      fi
+      if [ "$rc" -eq 0 ]; then
         store=$(xcrun simctl get_app_container "$SIM" com.example.Chief data) || rc=1
         checkpoint=$(cat "$CTL/openurl-since" 2>/dev/null || cat "$CTL/pair-since" 2>/dev/null) || rc=1
         if [ "$rc" -eq 0 ]; then

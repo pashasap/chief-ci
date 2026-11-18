@@ -47,14 +47,15 @@ final class KitUITests: XCTestCase {
             guard request("cacheonline") else { return }
             assertRecordAtZero(app, proof: "kit01a-after-api2-sync")
             guard request("stopstub") else { return }
+            defer { _ = request("restartstub", timeout: 45) }
+            guard request("cachefreeze") else { return }
             app.terminate()
             XCTAssertEqual(app.state, .notRunning, "Kit must terminate before the relaunch")
             app.launch()
             tab(app, "Inbox")
             XCTAssertTrue(waitText(app, "building manager", timeout: 20), "Synthetic snapshot did not reload offline")
-            guard request("cacheoffline") else { return }
             assertRecordAtZero(app, proof: "kit01a-after-offline-relaunch")
-            request("restartstub", timeout: 45)
+            guard request("cacheoffline") else { return }
         }
 
         step("13a larger text XL light and dark") {
@@ -161,6 +162,9 @@ final class KitUITests: XCTestCase {
             sleep(2)
             shot("env-01-unpaired-inbox")
             dump(app, "env-unpaired-inbox")
+            tab(app, "Settings")
+            let status = inspectVisiblePairingStatus(app)
+            XCTAssertTrue(status.notPaired && !status.paired, "Environment group must start unpaired before fresh pairing")
         }
 
         pairAndConfirm(app, prefix: "env-")
@@ -781,7 +785,7 @@ final class KitUITests: XCTestCase {
         let ok = raw == "ok"
         note("REQUEST \(what) result=\(raw.isEmpty ? "absent" : raw) ok=\(ok)")
         switch what {
-        case "dark", "revokemic", "stopstub", "markpair", "markopenurl", "cacheonline", "cacheoffline", "restartstub":
+        case "dark", "revokemic", "stopstub", "markpair", "markopenurl", "cacheonline", "cachefreeze", "cacheoffline", "restartstub":
             XCTAssertTrue(ok, "host request \(what) did not verify (\(raw.isEmpty ? "no result file" : raw)); the condition this stop depends on is unproven")
         default:
             break

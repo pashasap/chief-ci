@@ -215,6 +215,8 @@ jobs:
             ci/artifacts/xl-layout/**
 
       # ---- group 2: environment (mic denied, offline, landscape) ----------------------------------------------
+      # Independent environment setup, after the layout group's same-container proof and upload.
+      # Remove only the disposable simulator install so its persisted pairing cannot fake a fresh pair.
       - name: Group environment/mic-denied/offline/landscape (own timeout, own artifacts)
         id: xl_env
         if: ${{ github.event_name == 'workflow_dispatch' && (env.AUDIT_GROUP == 'all' || env.AUDIT_GROUP == 'xl' || env.AUDIT_GROUP == 'xl-environment') && inputs.build_only != true }}
@@ -223,7 +225,15 @@ jobs:
         env:
           GROUP_BUDGET_S: "540"
           MIN_SHOTS: "10"
-        run: bash ci/UITests/group_runner.sh xl-environment
+        run: |
+          if xcrun simctl get_app_container "$SIM_UDID" com.example.Chief data >/dev/null 2>&1; then
+            xcrun simctl uninstall "$SIM_UDID" com.example.Chief
+            if xcrun simctl get_app_container "$SIM_UDID" com.example.Chief data >/dev/null 2>&1; then
+              echo 'Environment setup failed: layout app container is still installed'
+              exit 1
+            fi
+          fi
+          bash ci/UITests/group_runner.sh xl-environment
 
       - name: Upload environment artifacts
         if: ${{ always() && steps.xl_env.outcome != 'skipped' }}
