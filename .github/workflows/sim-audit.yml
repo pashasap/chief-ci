@@ -163,7 +163,7 @@ jobs:
 
       - name: Boot simulator and trust the throwaway CA
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_only != true }}
-        timeout-minutes: 4
+        timeout-minutes: 10
         run: |
           set +e
           A=ci/artifacts; mkdir -p $A
@@ -180,8 +180,10 @@ jobs:
             T1=$(date +%s); bounded 240 xcrun simctl keychain "$SIM_UDID" add-root-cert "$RUNNER_TEMP/cert/ca.pem"
             echo "add-root-cert after boot rc=$? in $(( $(date +%s) - T1 ))s"
           fi
-          xcrun simctl status_bar "$SIM_UDID" override --time 9:41 > /dev/null 2>&1 || true
-          xcrun simctl ui "$SIM_UDID" appearance light
+          T2=$(date +%s); bounded 20 xcrun simctl status_bar "$SIM_UDID" override --time 9:41 > /dev/null 2>&1 || true
+          echo "status_bar rc=$? in $(( $(date +%s) - T2 ))s"
+          T3=$(date +%s); bounded 20 xcrun simctl ui "$SIM_UDID" appearance light || true
+          echo "appearance rc=$? in $(( $(date +%s) - T3 ))s"
           echo "ready at $(( $(date +%s) - JOB_T0 ))s"
           true
 
