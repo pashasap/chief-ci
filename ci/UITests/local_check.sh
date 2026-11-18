@@ -78,6 +78,10 @@ grep -q 'UISupportedInterfaceOrientations~ipad' .github/workflows/sim-audit.yml 
   && ok "build step prints both orientation arrays" || no "build step does not print UISupportedInterfaceOrientations~ipad"
 grep -q 'source-manifest.txt' .github/workflows/sim-audit.yml \
   && ok "workflow mentions source-manifest.txt" || no "workflow does not mention source-manifest.txt"
+grep -q 'inputs.build_only' .github/workflows/sim-audit.yml \
+  && ok "workflow has the build_only compile check" || no "workflow lost the build_only compile check"
+grep -qE "TEST \(EXECUTE \)\?SUCCEEDED" ci/UITests/group_runner.sh \
+  && ok "group runner accepts both success banners" || no "group runner does not accept the execute banner"
 [ "$(grep -c 'ci/artifacts/source-manifest.txt' .github/workflows/sim-audit.yml)" -ge 2 ] \
   && ok "source-manifest.txt is in both artifact uploads" || no "source-manifest.txt is not in both uploads"
 

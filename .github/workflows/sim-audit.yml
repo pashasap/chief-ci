@@ -28,6 +28,10 @@ on:
         type: choice
         options: [all, xl-layout, xl-environment, light]
         default: all
+      build_only:
+        description: Compile the UI-test bundle and stop (a harness check, never an audit run)
+        type: boolean
+        default: false
 
 concurrency:
   group: night-1118-harness-${{ github.workflow }}-${{ github.ref }}
@@ -111,6 +115,7 @@ jobs:
           bash ci/stub/make_cert.sh "$RUNNER_TEMP/cert" > ci/artifacts/cert.txt 2>&1
 
       - name: XcodeGen and build-for-testing (generic destination, simulator not booted)
+        id: build
         timeout-minutes: 9
         run: |
           set +e
@@ -157,6 +162,7 @@ jobs:
           ls ci/DD/Build/Products/*.xctestrun > /dev/null 2>&1 || { echo "no xctestrun produced"; exit 1; }
 
       - name: Boot simulator and trust the throwaway CA
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_only != true }}
         timeout-minutes: 4
         run: |
           set +e
@@ -182,7 +188,7 @@ jobs:
       # ---- group 1: XL and XXXL layout (first, so the night's primary evidence cannot be lost) ---------------
       - name: Group XL/XXXL layout (own timeout, own artifacts)
         id: xl_layout
-        if: ${{ github.event_name == 'workflow_dispatch' && (env.AUDIT_GROUP == 'all' || env.AUDIT_GROUP == 'xl-layout') }}
+        if: ${{ github.event_name == 'workflow_dispatch' && (env.AUDIT_GROUP == 'all' || env.AUDIT_GROUP == 'xl-layout') && inputs.build_only != true }}
         timeout-minutes: 16
         continue-on-error: true
         env:
@@ -209,7 +215,7 @@ jobs:
       # ---- group 2: environment (mic denied, offline, landscape) ----------------------------------------------
       - name: Group environment/mic-denied/offline/landscape (own timeout, own artifacts)
         id: xl_env
-        if: ${{ github.event_name == 'workflow_dispatch' && (env.AUDIT_GROUP == 'all' || env.AUDIT_GROUP == 'xl-environment') }}
+        if: ${{ github.event_name == 'workflow_dispatch' && (env.AUDIT_GROUP == 'all' || env.AUDIT_GROUP == 'xl-environment') && inputs.build_only != true }}
         timeout-minutes: 10
         continue-on-error: true
         env:
@@ -233,7 +239,7 @@ jobs:
       # ---- group 3: light-mode actions, sheets, Share, dark ------------------------------------------------
       - name: Group light/actions (own timeout, own artifacts)
         id: light
-        if: ${{ github.event_name == 'workflow_dispatch' && (env.AUDIT_GROUP == 'all' || env.AUDIT_GROUP == 'light') }}
+        if: ${{ github.event_name == 'workflow_dispatch' && (env.AUDIT_GROUP == 'all' || env.AUDIT_GROUP == 'light') && inputs.build_only != true }}
         timeout-minutes: 11
         continue-on-error: true
         env:
@@ -257,7 +263,7 @@ jobs:
 
       # ---- verdict: the only place that decides the job's colour ------------------------------------------
       - name: Verdict (a required group that did not run, did not pass or lost its evidence makes the job red)
-        if: always()
+        if: always() && inputs.build_only != true
         timeout-minutes: 2
         run: |
           set +e
@@ -279,3 +285,17 @@ jobs:
           xcrun simctl shutdown "$SIM_UDID" || true
           echo "total elapsed=$(( $(date +%s) - JOB_T0 ))s"
           exit $FAIL
+
+      # A build-only dispatch is a harness check, never an audit run: it proves the UI-test bundle compiles on the
+      # standard runner before an audit spends one of its two slots. On 18 November a single type error in the
+      # harness cost an audit slot, and nothing on the Linux host that writes the harness can catch one.
+      - name: Build-only result (compile check, no simulator, not an audit)
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.build_only == true
+        timeout-minutes: 2
+        run: |
+          set +e
+          B="${{ steps.build.outcome }}"
+          echo "BUILD_ONLY build=$B sha=${GITHUB_SHA:0:7}"
+          echo "note: this run is a harness compile check; it counts towards no audit's CI budget"
+          if [ "$B" != "success" ]; then echo "BUILD_ONLY: FAIL"; exit 1; fi
+          echo "BUILD_ONLY: PASS"
