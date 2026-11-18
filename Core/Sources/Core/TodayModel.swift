@@ -9,16 +9,19 @@ struct DoneBarState: Equatable, Sendable {
     var message = "Done"
 }
 
-/// State of the Today tab: tasks done this session and the Done bar. Commands go through `DecisionModel`.
+/// State of the Today tab: tasks done this session. Commands and their receipts live in `DecisionModel`.
 @MainActor @Observable
 public final class TodayModel {
     public var selectedSegment = 0
+    public var moreHandle: String?
     let inbox: InboxModel
     let decisions: DecisionModel
 
     /// Tasks marked done this session, with the `generated_at` of the snapshot that confirmed them.
     private(set) var keptDone: [String: String] = [:]
-    private(set) var doneBar: DoneBarState?
+    /// Candidates whose Augment field is open, and those awaiting a Delete confirmation.
+    var augmentedIdeas: Set<String> = []
+    var deletingIdeas: Set<String> = []
 
     public init(inbox: InboxModel, decisions: DecisionModel) {
         self.inbox = inbox
@@ -29,11 +32,6 @@ public final class TodayModel {
 
     func isKeptDone(_ handle: String) -> Bool { keptDone[handle] == snapshotStamp && !decisions.reopenedHandles.contains(handle) }
 
-    var activeBar: DoneBarState? {
-        guard let bar = doneBar, decisions.now < bar.deadline else { return nil }
-        return bar
-    }
-
     // MARK: Commands
 
     func markDone(_ handle: String) async {
@@ -43,17 +41,7 @@ public final class TodayModel {
         recordIfDone(handle)
     }
 
-    func reopen(_ handle: String) async {
-        guard decisions.canDecide else { return }
-        let task = inbox.snapshot?.tasks.first { $0.handle == handle }
-        doneBar = nil
-        decisions.resetState(handle)
-        await decisions.send("task.reopen", handle: handle, rev: task?.rev, args: [:])
-        if decisions.state(for: handle) == .confirmed {
-            keptDone[handle] = nil
-            decisions.resetState(handle)
-        }
-    }
+    func reopen(_ handle: String) async { await decisions.undoTaskDone(handle) }
 
     func closeWaiting(_ handle: String) async {
         decisions.resetState(handle)
@@ -68,11 +56,51 @@ public final class TodayModel {
         if wasDone { failed.forEach(recordIfDone) }
     }
 
+    // MARK: Ideas
+
+    /// Opens the augmentation field of a candidate. Nothing is sent until Save.
+    func openAugment(_ handle: String) {
+        augmentedIdeas.insert(handle)
+    }
+
+    /// Augment's Save: a correction of the candidate, with the typed text and nothing else.
+    func augmentIdea(_ handle: String, text: String) async {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, decisions.canDecide,
+            decisions.state(for: handle) == nil,
+            let rev = candidate(handle)?.rev
+        else { return }
+        await decisions.send("item.correct", handle: handle, rev: rev, args: ["text": .string(text)])
+    }
+
+    func requestDeleteIdea(_ handle: String) {
+        guard decisions.canDecide, decisions.state(for: handle) == nil, candidate(handle) != nil else { return }
+        deletingIdeas.insert(handle)
+    }
+
+    func cancelDeleteIdea(_ handle: String) {
+        deletingIdeas.remove(handle)
+    }
+
+    /// Delete's confirmation: only the drop, and the idea stays until a snapshot omits it.
+    func deleteIdea(_ handle: String) async {
+        guard deletingIdeas.remove(handle) != nil, let candidate = candidate(handle) else { return }
+        await decisions.drop(candidate)
+    }
+
+    /// Asks for research only while the snapshot names no queued research action.
+    func researchIdea(_ handle: String) async {
+        guard decisions.canDecide, decisions.state(for: handle) == nil,
+            let candidate = candidate(handle), !candidate.hasResearch
+        else { return }
+        await decisions.research(candidate)
+    }
+
+    private func candidate(_ handle: String) -> Candidate? {
+        inbox.snapshot?.candidates.first { $0.handle == handle }
+    }
+
     private func recordIfDone(_ handle: String) {
         guard decisions.state(for: handle) == .confirmed else { return }
         keptDone[handle] = snapshotStamp
-        var bar = DoneBarState(handle: handle, deadline: decisions.now.addingTimeInterval(DecisionModel.undoWindow))
-        if let line = decisions.confirmation, line.handle == handle, line.moment == .taskDone { bar.message = line.line }
-        doneBar = bar
     }
 }

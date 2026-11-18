@@ -50,6 +50,7 @@ public final class CorrectionModel {
     private func rev(of handle: String) -> String? {
         guard let snapshot = inbox.snapshot else { return nil }
         if let task = snapshot.tasks.first(where: { $0.handle == handle }) { return task.rev }
-        return snapshot.notes.first { $0.handle == handle }?.rev
+        if let note = snapshot.notes.first(where: { $0.handle == handle }) { return note.rev }
+        return snapshot.candidates.first { $0.handle == handle }?.rev
     }
 }

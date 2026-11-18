@@ -8,17 +8,40 @@ public enum DecisionAction: Equatable, Sendable { case approve, reject }
 @MainActor @Observable
 public final class DecisionModel {
     public private(set) var actionSerial = 0
-    private var receipt: (handle: String, type: String, message: String, until: Date, previous: When?)?
+    private typealias Receipt = (handle: String, type: String, message: String, until: Date, previous: When?)
+    private var receipt: Receipt?
     var reopenedHandles: Set<String> = []
     private var previousWhens: [String: When] = [:]
 
-    public var actionBar: ActionBar? {
+    private var activeReceipt: Receipt? {
         guard let receipt, clock.now < receipt.until else { return nil }
-        let inverseExists = receipt.type == "task.done" || (receipt.type == "task.defer" && receipt.previous != nil)
-        let taskExists = inbox.snapshot?.tasks.contains { $0.handle == receipt.handle && !($0.rev ?? "").isEmpty } == true
-        let undo = inverseExists && taskExists ? InboxControl(label: "Undo", role: .normal,
-            isEnabled: canDecide, disabledReason: cannotDecideReason, state: .idle, action: .undo) : nil
-        return ActionBar(message: receipt.message, undo: undo)
+        return receipt
+    }
+
+    public var actionBar: ActionBar? {
+        guard let receipt = activeReceipt else { return nil }
+        return ActionBar(message: receipt.message, undo: undoControl(for: receipt))
+    }
+
+    var todayBar: TodayBar? {
+        guard let receipt = activeReceipt, receipt.type == "task.done",
+            var undo = undoControl(for: receipt) else { return nil }
+        undo.action = .reopen(receipt.handle)
+        return TodayBar(message: receipt.message, undo: undo)
+    }
+
+    private func undoRev(for receipt: Receipt) -> String? {
+        guard receipt.type == "task.done" || (receipt.type == "task.defer" && receipt.previous != nil),
+            let rev = inbox.snapshot?.tasks.first(where: { $0.handle == receipt.handle })?.rev,
+            !rev.isEmpty else { return nil }
+        return rev
+    }
+
+    private func undoControl(for receipt: Receipt) -> InboxControl? {
+        guard undoRev(for: receipt) != nil else { return nil }
+        let state = state(for: receipt.handle)
+        return InboxControl(label: "Undo", role: .normal, isEnabled: canDecide && (state == nil || state == .confirmed),
+            disabledReason: cannotDecideReason, state: .idle, action: .undo)
     }
 
     public func shouldCloseSheet(handle: String) -> Bool {
@@ -26,20 +49,34 @@ public final class DecisionModel {
         return receipt.handle == handle
     }
 
+    func undoTaskDone(_ handle: String) async {
+        guard let receipt = activeReceipt, receipt.type == "task.done", receipt.handle == handle else { return }
+        await undo(receipt)
+    }
+
     public func undoLastAction() async {
-        guard actionBar?.undo?.isEnabled == true, let receipt,
-            let task = inbox.snapshot?.tasks.first(where: { $0.handle == receipt.handle }) else { return }
-        resetState(task.handle)
-        if receipt.type == "task.done" {
-            await send("task.reopen", handle: task.handle, rev: task.rev, args: [:])
-        } else if receipt.type == "task.defer", let when = receipt.previous {
+        guard let receipt = activeReceipt else { return }
+        await undo(receipt)
+    }
+
+    private func undo(_ receipt: Receipt) async {
+        guard undoControl(for: receipt)?.isEnabled == true, let rev = undoRev(for: receipt) else { return }
+        let command: Command
+        if let when = receipt.previous, receipt.type == "task.defer" {
             let value: JSONValue = .object(["kind": .string(when.kind), "date": when.date.map(JSONValue.string) ?? .null])
-            await send("task.defer", handle: task.handle, rev: task.rev, args: ["when": value])
+            command = CommandBuilder.make(type: "task.defer", handle: receipt.handle, rev: rev, args: ["when": value])
+        } else {
+            command = CommandBuilder.make(type: "task.reopen", handle: receipt.handle, rev: rev, args: [:])
         }
+        resetState(receipt.handle)
+        // Consume the shared receipt before awaiting the inverse so neither surface can offer it again.
         self.receipt = nil
+        await send(command, recordsReceipt: false)
     }
     public static let undoWindow: TimeInterval = 5
     public static let offlineReason = "No connection. Decisions need one."
+    /// Commands whose every failure keeps a Retry and shows the server's message, except 401 and 409.
+    static let retryableFailureTypes: Set<String> = ["proposal.drop", "candidate.research", "candidate.drop"]
 
     public private(set) var message: String?
 
@@ -114,6 +151,10 @@ public final class DecisionModel {
         await send("proposal.reject", handle: proposal.handle, rev: proposal.rev, args: [:])
     }
 
+    public func drop(_ proposal: Proposal) async {
+        await send("proposal.drop", handle: proposal.handle, rev: proposal.rev, args: [:])
+    }
+
     public func change(_ proposal: Proposal, text: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -130,6 +171,16 @@ public final class DecisionModel {
         await send("question.answer", handle: question.handle, rev: question.rev, args: ["text": .string(text)])
     }
 
+    /// Asks for research on a candidate project. The queued action handle arrives only in a later snapshot.
+    public func research(_ candidate: Candidate) async {
+        await send("candidate.research", handle: candidate.handle, rev: candidate.rev, args: [:])
+    }
+
+    /// Deletes a candidate project. It is not a learning signal and carries no queued action.
+    public func drop(_ candidate: Candidate) async {
+        await send("candidate.drop", handle: candidate.handle, rev: candidate.rev, args: [:])
+    }
+
     public func retry() async {
         guard let command = failedCommand, canDecide else { return }
         failedCommand = nil
@@ -141,14 +192,20 @@ public final class DecisionModel {
     /// The one way a command is built: only from an item that is in the current snapshot and carries a rev.
     /// Without one nothing is built or sent; the screens disable the control with `missingItemReason`.
     func send(_ type: String, handle: String, rev: String?, args: [String: JSONValue]) async {
-        guard let rev, !rev.isEmpty else { return }
-        guard canDecide, states[handle] == nil else { return }
-        message = nil
-        confirmation = nil
-        await deliver(CommandBuilder.make(type: type, handle: handle, rev: rev, args: args))
+        guard let rev, !rev.isEmpty, canDecide, states[handle] == nil else { return }
+        await send(CommandBuilder.make(type: type, handle: handle, rev: rev, args: args))
     }
 
-    private func deliver(_ command: Command) async {
+    private func send(_ command: Command, recordsReceipt: Bool = true) async {
+        if command.type == "task.reopen", receipt?.type == "task.done", receipt?.handle == command.handle {
+            receipt = nil
+        }
+        message = nil
+        confirmation = nil
+        await deliver(command, recordsReceipt: recordsReceipt)
+    }
+
+    private func deliver(_ command: Command, recordsReceipt: Bool = true) async {
         if command.type == "task.defer", previousWhens[command.id] == nil,
             let when = inbox.snapshot?.tasks.first(where: { $0.handle == command.handle })?.when {
             previousWhens[command.id] = when
@@ -162,12 +219,23 @@ public final class DecisionModel {
             return fail(command)
         }
         switch response.status {
-        case 200 where isOK(response.body): await confirmAfterRefetch(command)
+        case 200 where isOK(response.body): await confirmAfterRefetch(command, recordsReceipt: recordsReceipt)
         case 401: notPaired(command)
         case 409: await reloadAfterConflict(command)
+        case _ where command.type == "proposal.drop" || isIdeaCommand(command):
+            fail(command)
+            message = (try? JSONDecoder().decode(ErrorBody.self, from: response.body))?.error.message
+                ?? "Did not go through"
         case 400, 404, 422: refuse(command, body: response.body)
         default: fail(command)
         }
+    }
+
+    /// An Ideas command, or a correction of a candidate project, keeps its Retry and the server's message.
+    private func isIdeaCommand(_ command: Command) -> Bool {
+        if Self.retryableFailureTypes.contains(command.type) { return true }
+        guard command.type == "item.correct" else { return false }
+        return inbox.snapshot?.candidates.contains { $0.handle == command.handle } == true
     }
 
     /// The server refused the command: show its message as sent, offer no Retry.
@@ -207,7 +275,7 @@ public final class DecisionModel {
         message = "This changed while you were looking. Reloaded."
     }
 
-    private func confirmAfterRefetch(_ command: Command) async {
+    private func confirmAfterRefetch(_ command: Command, recordsReceipt: Bool) async {
         await inbox.refresh()
         guard isSettled(command) else { return fail(command) }
         states[command.handle] = .confirmed
@@ -227,7 +295,9 @@ public final class DecisionModel {
             default: text = confirmation?.line ?? "Corrected."
             }
             actionSerial += 1
-            receipt = (command.handle, command.type, text, clock.now.addingTimeInterval(Self.undoWindow), previousWhens[command.id])
+            if recordsReceipt {
+                receipt = (command.handle, command.type, text, clock.now.addingTimeInterval(Self.undoWindow), previousWhens[command.id])
+            }
         }
         if command.type == "proposal.approve" || command.type == "proposal.reject" {
             undoDeadline = clock.now.addingTimeInterval(Self.undoWindow)

@@ -6,11 +6,16 @@ struct TodayView: View {
     let model: TodayModel
     let inbox: InboxModel
     let environment: AppEnvironment
+    var layoutSize: CGSize = CGSize(width: 390, height: 844)
+    @Environment(\.dynamicTypeSize) private var textSize
     @State private var sheetHandle: String?
     private var selected: Int { model.selectedSegment }
     @State private var now = Date()
 
-    private var screen: TodayScreen { TodayScreen(model: model) }
+    private var screen: TodayScreen {
+        TodayScreen(model: model).presented(in: RecordingPanelLayout(
+            width: layoutSize.width, height: layoutSize.height, largestText: textSize.isAccessibilitySize))
+    }
 
     var body: some View {
         let _ = now  // reading it makes the view redraw when the Done bar expires
@@ -20,31 +25,85 @@ struct TodayView: View {
             VStack(spacing: 0) {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
-                        notes(screen)
-                        Picker(screen.segmentLabel, selection: Binding(get: { selected }, set: { model.selectedSegment = $0 })) {
-                            ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
-                                Text("\(segment.title) \(segment.count)").tag(index)
-                            }
+                        if textSize.isAccessibilitySize {
+                            Text(screen.header)
+                                .font(.largeTitle.bold())
+                                .foregroundStyle(Theme.text)
+                                .lineLimit(screen.headerLineLimit)
+                                .wrapping()
+                                .accessibilityAddTraits(.isHeader)
                         }
-                        .pickerStyle(.segmented)
+                        notes(screen)
+                        segmentSelector(segments, screen)
                         if segments.indices.contains(selected) { segmentView(segments[selected], screen) }
                     }
                     .padding(16)
                 }
-
             }
             .background(Theme.background)
-            .navigationTitle(screen.header)
+            .navigationTitle(textSize.isAccessibilitySize ? "" : screen.header)
+            .navigationBarTitleDisplayMode(textSize.isAccessibilitySize ? .inline : .automatic)
             .refreshable { await inbox.pullToRefresh() }
         }
         .sheet(isPresented: sheetOpen) {
             if let handle = sheetHandle { TaskSheetView(handle: handle, environment: environment) }
         }
+        .sheet(isPresented: moreOpen) { metadataSheet(screen) }
         .task(id: screen.bar?.undo.action) { await expireBar() }
+    }
+
+    @ViewBuilder private func metadataSheet(_ screen: TodayScreen) -> some View {
+        if let metadata: TaskMetadataScreen = screen.more {
+            TaskMetadataView(screen: metadata) { Task { await screen.perform(metadata.done) } }
+        }
+    }
+
+    private func draftBinding(_ handle: String) -> Binding<String> {
+        Binding(
+            get: { inbox.drafts.texts[handle] ?? "" },
+            set: { inbox.drafts.texts[handle] = $0 })
+    }
+
+    private var moreOpen: Binding<Bool> {
+        Binding(get: { screen.more != nil }, set: { if !$0 { model.moreHandle = nil } })
     }
 
     private var sheetOpen: Binding<Bool> {
         Binding(get: { sheetHandle != nil }, set: { if !$0 { sheetHandle = nil } })
+    }
+
+    @ViewBuilder private func segmentSelector(_ segments: [TodaySegment], _ screen: TodayScreen) -> some View {
+        if textSize.isAccessibilitySize && screen.scalableText {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+                    segmentButton(segment, index: index, screen: screen)
+                }
+            }
+        } else {
+            Picker(screen.segmentLabel, selection: Binding(get: { selected }, set: { screen.selectSegment($0) })) {
+                ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+                    Text(segment.label).tag(index)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+
+    private func segmentButton(_ segment: TodaySegment, index: Int, screen: TodayScreen) -> some View {
+        Button {
+            screen.selectSegment(index)
+        } label: {
+            Text(segment.label)
+                .lineLimit(segment.lineLimit)
+                .wrapping()
+                .frame(maxWidth: .infinity, minHeight: segment.minimumHeight, alignment: .leading)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(segment.isSelected ? Theme.accent : Theme.card)
+        .foregroundStyle(segment.isSelected ? Theme.recordText : Theme.text)
+        .frame(minWidth: segment.minimumWidth, minHeight: segment.minimumHeight)
+        .accessibilityLabel(segment.accessibilityLabel)
+        .accessibilityAddTraits(segment.isSelected ? .isSelected : [])
     }
 
     @ViewBuilder private func notes(_ screen: TodayScreen) -> some View {
@@ -60,12 +119,9 @@ struct TodayView: View {
         ForEach(segment.tasks, id: \.handle) { taskRow($0, screen) }
         ForEach(segment.waiting, id: \.handle) { waitingCard($0, screen) }
         ForEach(segment.ideas, id: \.handle) { idea in
-            VStack(alignment: .leading, spacing: 4) {
-                Text(idea.text).wrapping()
-                if let note = idea.note { Text(note).font(.footnote).foregroundStyle(Theme.secondaryText).wrapping() }
-                Text(idea.handle).font(.caption2).foregroundStyle(Theme.secondaryText)
+            TodayIdeaCard(idea: idea, draft: draftBinding(idea.handle)) { control in
+                Task { await screen.perform(control) }
             }
-            .card()
         }
     }
 
@@ -73,11 +129,11 @@ struct TodayView: View {
         VStack(alignment: .leading, spacing: 6) {
             Button { sheetHandle = row.handle } label: {
                 Text(row.text).lineLimit(row.textLineLimit).strikethrough(row.isStruck)
-                    .foregroundStyle(Theme.text).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .foregroundStyle(Theme.text).wrapping()
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(row.text)
-            Text(row.handle).font(.caption2).foregroundStyle(Theme.secondaryText)
             HStack {
                 Text(row.pill).font(.caption).foregroundStyle(Theme.secondaryText)
                 if let mark = row.overdueMark { Text(mark).font(.caption.bold()).foregroundStyle(Theme.destructive) }

@@ -16,7 +16,7 @@ enum Theme {
     static let recordButton = color(DesignTokens.recordRed)
     static let cornerRadius = CGFloat(DesignTokens.cornerRadius)
 
-    private static func color(_ token: TokenColor) -> Color {
+    static func color(_ token: TokenColor) -> Color {
         Color(UIColor { traits in uiColor(traits.userInterfaceStyle == .dark ? token.dark : token.light) })
     }
 

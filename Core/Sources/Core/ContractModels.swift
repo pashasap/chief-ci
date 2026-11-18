@@ -79,6 +79,13 @@ public struct Candidate: Codable, Equatable, Sendable {
     public var text: String
     public var state: String?
     public var note: String?
+    /// The action handle of the research already queued for this candidate, when the server identified one.
+    public var research: String?
+
+    /// True while the snapshot names a research action; then no second one may be requested.
+    public var hasResearch: Bool {
+        !(research ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 }
 
 public struct Proposal: Codable, Equatable, Sendable {
