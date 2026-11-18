@@ -3,16 +3,27 @@
 #
 #   bash ci/UITests/local_check.sh
 #
-# Checks: bash -n every shell script and every workflow shell block, parse the workflows with PyYAML, run both
-# helper self-tests, and dry-run both stop groups with a synthetic test.log so the pass/fail plumbing is proven
-# before a CI run is spent.
+# Checks, in order:
+#   1. bash -n on every shell script and on every workflow shell block, plus a PyYAML parse of the workflows.
+#   2. Both helper self-tests (pairing verdict, shot inventory).
+#   3. Dry-run isolation: a GROUP_DRY=1 run uses private working paths, refuses the shared /tmp ones, and leaves
+#      /tmp/kitctl and /tmp/kitshots byte-for-byte as it found them.
+#   4. The exact-method propagation replay (episode 20): eight synthetic logs, one verdict each.
+#   5. The host-request postconditions (episode 19): six replayed requests with stubbed externals.
+#   6. The required-group verdict (episode 15): seven replayed outcome pairs through the same script the workflow
+#      runs.
+# Exit 0 only when every case matched its expectation.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 FAIL=0
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/groupdry-XXXXXX")
+
+ok () { echo "PASS $*"; }
+no () { FAIL=1; echo "FAIL $*"; }
 
 echo "== bash -n (scripts)"
 for s in ci/UITests/*.sh ci/stub/*.sh; do
-  if bash -n "$s"; then echo "ok $s"; else echo "FAIL $s"; FAIL=1; fi
+  if bash -n "$s"; then ok "$s"; else no "$s"; fi
 done
 
 echo "== workflow parse and shell blocks"
@@ -60,47 +71,230 @@ echo "== helper self-tests"
 "$PY" ci/UITests/pairing_status.py --self-test || FAIL=1
 "$PY" ci/UITests/shot_inventory.py --self-test || FAIL=1
 
-echo "== dry runs of both stop groups (no simulator, no xcodebuild)"
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/groupdry-XXXXXX")
-{
-  echo "KIT 1.0 AUDIT begin 01 launch"
-  echo "KIT 1.1 shot dry-01"
-  echo "KIT 1.2 shot dry-02"
-  echo "Test Case '-[KitUITests.KitUITests testX]' passed (1.0 seconds)."
-  echo "Test Suite 'KitUITests' passed at 2026-11-17 22:00:00.000."
-  echo "Executed 1 test, with 0 failures (0 unexpected) in 1.0 (1.0) seconds"
-  echo "** TEST SUCCEEDED **"
-} > "$TMP/clean.log"
-mkdir -p "$TMP/xl/shots" "$TMP/light/shots" "$TMP/noshots/shots"
-for g in xl light; do : > "$TMP/$g/shots/dry-01.png"; : > "$TMP/$g/shots/dry-02.png"; done
+echo "== workflow wiring (the step must run the gate's own scripts, not a copy)"
+grep -q 'bash ci/UITests/verdict.sh' .github/workflows/sim-audit.yml \
+  && ok "verdict step calls ci/UITests/verdict.sh" || no "verdict step does not call ci/UITests/verdict.sh"
+grep -q 'UISupportedInterfaceOrientations~ipad' .github/workflows/sim-audit.yml \
+  && ok "build step prints both orientation arrays" || no "build step does not print UISupportedInterfaceOrientations~ipad"
+grep -q 'source-manifest.txt' .github/workflows/sim-audit.yml \
+  && ok "workflow mentions source-manifest.txt" || no "workflow does not mention source-manifest.txt"
+[ "$(grep -c 'ci/artifacts/source-manifest.txt' .github/workflows/sim-audit.yml)" -ge 2 ] \
+  && ok "source-manifest.txt is in both artifact uploads" || no "source-manifest.txt is not in both uploads"
 
-rc=0
-GROUP_DRY=1 GROUP_DRY_LOG="$TMP/clean.log" GROUP_DRY_DIR="$TMP/xl" MIN_SHOTS=2 \
-  bash ci/UITests/group_runner.sh xl > "$TMP/xl.out" 2>&1 || rc=$?
-echo "clean log rc=$rc (want 0)"; grep -E "^GROUP_RESULT" "$TMP/xl.out"
-[ "$rc" -eq 0 ] || FAIL=1
+echo "== fixture logs for the propagation replay"
+mklog () {
+  local f=$1 mode=$2
+  {
+    printf '%s\n' "KIT 1.0 AUDIT begin 01 x" "KIT 1.1 shot dry-01" "KIT 1.2 shot dry-02"
+    case "$mode" in
+      xl-pass)
+        printf '%s\n' "Test Case '-[KitUITests.KitUITests testXLOfflineLandscape]' passed (1.0 seconds)." \
+          "Test Suite 'KitUITests' passed at 2026-11-18 00:00:00.000." \
+          "Executed 1 test, with 0 failures (0 unexpected) in 1.0 (1.0) seconds" \
+          "** TEST SUCCEEDED **" ;;
+      light-pass)
+        printf '%s\n' "Test Case '-[KitUITests.KitUITests testLightActions]' passed (1.0 seconds)." \
+          "Test Suite 'KitUITests' passed at 2026-11-18 00:00:00.000." \
+          "Executed 1 test, with 0 failures (0 unexpected) in 1.0 (1.0) seconds" \
+          "** TEST SUCCEEDED **" ;;
+      xl-skipped)
+        printf '%s\n' "Test Case '-[KitUITests.KitUITests testXLOfflineLandscape]' skipped (0.5 seconds)." \
+          "Executed 1 test, with 0 failures (0 unexpected) in 0.5 (0.5) seconds" \
+          "** TEST SUCCEEDED **" ;;
+      aggregate)
+        printf '%s\n' "Test Suite 'KitUITests' passed at 2026-11-18 00:00:00.000." \
+          "Executed 1 test, with 0 failures (0 unexpected) in 1.0 (1.0) seconds" \
+          "** TEST SUCCEEDED **" ;;
+      xl-failed)
+        printf '%s\n' "Test Case '-[KitUITests.KitUITests testXLOfflineLandscape]' failed (1.0 seconds)." \
+          "Executed 1 test, with 1 failure (0 unexpected) in 1.0 (1.0) seconds" \
+          "** TEST FAILED **" ;;
+      zero-executed)
+        printf '%s\n' "Test Case '-[KitUITests.KitUITests testXLOfflineLandscape]' passed (1.0 seconds)." \
+          "Executed 0 tests, with 0 failures (0 unexpected) in 0.0 (0.0) seconds" \
+          "** TEST SUCCEEDED **" ;;
+      *) no "mklog: unknown mode $mode" ;;
+    esac
+  } > "$f"
+}
 
-rc=0
-sed 's/\*\* TEST SUCCEEDED \*\*/** TEST FAILED **/' "$TMP/clean.log" > "$TMP/red.log"
-printf "%s\n" "Test Case '-[KitUITests.KitUITests testX]' failed (1.0 seconds)." >> "$TMP/red.log"
-GROUP_DRY=1 GROUP_DRY_LOG="$TMP/red.log" GROUP_DRY_DIR="$TMP/light" MIN_SHOTS=2 \
-  bash ci/UITests/group_runner.sh light > "$TMP/red.out" 2>&1 || rc=$?
-echo "failing assertion rc=$rc (want 1)"; grep -E "GROUP_REASON" "$TMP/red.out" | head -3
-[ "$rc" -ne 0 ] || FAIL=1
+# A dry group run: private artifacts, seeded log, two collected PNGs. Sets RC.
+drygroup () { # <dir> <seed> <group>
+  RC=0
+  GROUP_DRY=1 GROUP_DRY_LOG="$2" GROUP_DRY_DIR="$1" MIN_SHOTS=2 \
+    bash ci/UITests/group_runner.sh "$3" > "$1.out" 2>&1 || RC=$?
+}
 
-rc=0
-head -3 "$TMP/clean.log" > "$TMP/nomarker.log"
-GROUP_DRY=1 GROUP_DRY_LOG="$TMP/nomarker.log" GROUP_DRY_DIR="$TMP/light" MIN_SHOTS=0 \
-  bash ci/UITests/group_runner.sh light > "$TMP/nomarker.out" 2>&1 || rc=$?
-echo "missing completion marker rc=$rc (want 1)"; grep -E "GROUP_REASON" "$TMP/nomarker.out" | head -3
-[ "$rc" -ne 0 ] || FAIL=1
+fingerprint () {
+  for p in /tmp/kitctl /tmp/kitshots; do
+    if [ -e "$p" ]; then echo "== $p"; ls -la "$p" 2>/dev/null; else echo "== $p absent"; fi
+  done
+}
 
+echo "== dry-run isolation and the propagation replay (episode 20)"
+BEFORE=$(fingerprint)
+iso=""
+for spec in "xl-pass:xl:xl-pass:0" "light-pass:light:light-pass:0" "xl-wrong-method:xl:light-pass:1" \
+            "xl-skipped:xl:xl-skipped:1" "xl-aggregate:xl:aggregate:1" "xl-failed:xl:xl-failed:1" \
+            "xl-zero-executed:xl:zero-executed:1"; do
+  IFS=: read -r label grp mode want <<< "$spec"
+  d="$TMP/ep20-$label"
+  mkdir -p "$d/shots"
+  mklog "$d.seed" "$mode"
+  : > "$d/shots/dry-01.png"; : > "$d/shots/dry-02.png"
+  drygroup "$d" "$d.seed" "$grp"
+  if [ "$RC" -eq "$want" ]; then ok "ep20 $label rc=$RC"; else
+    no "ep20 $label rc=$RC want=$want: $(grep -m1 GROUP_REASON "$d.out")"
+  fi
+  [ -z "$iso" ] && iso=$d
+done
+
+# Named stops: the same dry run, once with both names present and once with one never captured.
+d="$TMP/ep20-named-present"; mkdir -p "$d/shots"; mklog "$d.seed" xl-pass
+: > "$d/shots/dry-01.png"; : > "$d/shots/dry-02.png"
+RC=0
+GROUP_DRY=1 GROUP_DRY_LOG="$d.seed" GROUP_DRY_DIR="$d" MIN_SHOTS=2 REQUIRE_SHOTS="dry-01,dry-02" \
+  bash ci/UITests/group_runner.sh xl > "$d.out" 2>&1 || RC=$?
+[ "$RC" -eq 0 ] && ok "ep14 named stops present rc=0" || no "ep14 named stops present rc=$RC want=0: $(grep -m1 GROUP_REASON "$d.out")"
+
+d="$TMP/ep20-named-missing"; mkdir -p "$d/shots"; mklog "$d.seed" xl-pass
+: > "$d/shots/dry-01.png"; : > "$d/shots/dry-02.png"
+RC=0
+GROUP_DRY=1 GROUP_DRY_LOG="$d.seed" GROUP_DRY_DIR="$d" MIN_SHOTS=2 REQUIRE_SHOTS="dry-01,zz-never-shot" \
+  bash ci/UITests/group_runner.sh xl > "$d.out" 2>&1 || RC=$?
+[ "$RC" -ne 0 ] && ok "ep14 required stop never captured rc=$RC" || no "ep14 required stop never captured rc=0 want!=0"
+grep -q 'zz-never-shot' "$d/inventory.txt" 2>/dev/null \
+  && ok "ep14 inventory names the missing stop" || no "ep14 inventory does not name the missing stop"
+
+d="$TMP/ep20-lost-shot"; mkdir -p "$d/shots"; mklog "$d.seed" xl-pass
+: > "$d/shots/dry-01.png"
+drygroup "$d" "$d.seed" xl
+[ "$RC" -ne 0 ] && ok "ep20 logged shot missing from disk rc=$RC" || no "ep20 logged shot missing from disk rc=0 want!=0"
+
+# Isolation: the dry runs used private paths and the shared ones were not touched.
+grep -q "^paths .*ctl=$TMP/" "$iso.out" 2>/dev/null \
+  && ok "dry run kept its ctl dir under the artifact directory" || no "dry run did not use a private ctl dir: $(grep -m1 '^paths' "$iso.out")"
+grep -q "^paths .*shots=$TMP/" "$iso.out" 2>/dev/null \
+  && ok "dry run kept its shots dir under the artifact directory" || no "dry run did not use a private shots dir"
+[ -d "$iso/kitctl" ] && ok "dry run wrote its request markers into its own kitctl" || no "dry run wrote no private kitctl"
+RC=0
+GROUP_DRY=1 GROUP_DRY_LOG="$iso.seed" GROUP_DRY_DIR="$TMP/ep20-refuse" KIT_CTL_DIR=/tmp/kitctl \
+  bash ci/UITests/group_runner.sh xl > "$TMP/refuse.out" 2>&1 || RC=$?
+[ "$RC" -eq 65 ] && ok "dry run refuses the shared /tmp/kitctl" || no "dry run did not refuse the shared /tmp/kitctl (rc=$RC)"
+AFTER=$(fingerprint)
+if [ "$BEFORE" = "$AFTER" ]; then
+  ok "shared /tmp/kitctl and /tmp/kitshots are unchanged by the dry runs"
+else
+  no "the dry runs changed shared /tmp/kitctl or /tmp/kitshots (another process may also have); diff: $(diff <(printf '%s' "$BEFORE") <(printf '%s' "$AFTER") | head -6)"
+fi
+
+echo "== host request postconditions (episode 19)"
+BIN=$TMP/bin; mkdir -p "$BIN"
+cat > "$BIN/xcrun" <<'SHIM'
+#!/usr/bin/env bash
+case "$*" in
+  *" appearance dark"|*" appearance light") exit "${FAKE_UI_RC:-0}" ;;
+  *" appearance") echo "${FAKE_UI_VALUE:-dark}"; exit 0 ;;
+  *" privacy "*) exit "${FAKE_PRIV_RC:-0}" ;;
+  *) exit 0 ;;
+esac
+SHIM
+cat > "$BIN/curl" <<'SHIM'
+#!/usr/bin/env bash
+if [ -n "${FAKE_HTTP_SEQ:-}" ] && [ -s "${FAKE_HTTP_SEQ}" ]; then
+  v=$(head -1 "$FAKE_HTTP_SEQ")
+  tail -n +2 "$FAKE_HTTP_SEQ" > "$FAKE_HTTP_SEQ.next"
+  mv "$FAKE_HTTP_SEQ.next" "$FAKE_HTTP_SEQ"
+  printf '%s' "$v"
+  exit 0
+fi
+printf '%s' "${FAKE_HTTP:-000}"
+SHIM
+cat > "$BIN/kill" <<'SHIM'
+#!/usr/bin/env bash
+exit "${FAKE_KILL_RC:-0}"
+SHIM
+chmod +x "$BIN/xcrun" "$BIN/curl" "$BIN/kill"
+
+# A short-lived real process stands in for the stub, so the wait-for-exit loop is exercised for real.
+sleep 0.3 & STUBPID=$!; wait "$STUBPID" 2>/dev/null
+
+hostreq () { # <label> <request> <want result prefix>
+  local label=$1 req=$2 want=$3
+  local d="$TMP/host-$label"
+  rm -rf "$d"; mkdir -p "$d"
+  export FAKE_UI_RC FAKE_UI_VALUE FAKE_PRIV_RC FAKE_KILL_RC FAKE_HTTP_SEQ FAKE_HTTP PIDFILE
+  PATH="$BIN:$PATH" KIT_XCRUN="$BIN/xcrun" KIT_KILL="$BIN/kill" KIT_CURL="$BIN/curl" \
+    bash ci/UITests/host_request.sh "$req" --ctl "$d" --sim FAKE-UDID --pidfile "${PIDFILE:-$TMP/none.pid}" \
+      --reqlog "$TMP/requests.jsonl" --url "chief://pair?base=x" \
+      --health-url https://localhost:8443/v1/health --cacert "$TMP/ca.pem" --token tok \
+      > "$d.out" 2>&1
+  local got; got=$(cat "$d/$req-result" 2>/dev/null)
+  case "$got" in
+    "$want"*) ok "ep19 $label result=[$got]" ;;
+    *) no "ep19 $label result=[$got] want=[$want*]" ;;
+  esac
+  if [ "$want" = "ok" ]; then
+    [ -f "$d/$req-ok" ] && ok "ep19 $label wrote the success marker" || no "ep19 $label did not write the success marker"
+  else
+    [ -f "$d/$req-ok" ] && no "ep19 $label wrote a success marker for a failed request" || ok "ep19 $label wrote no success marker"
+  fi
+}
+
+: > "$TMP/requests.jsonl"; printf 'a\nb\nc\n' > "$TMP/requests.jsonl"
+PIDFILE=""
+FAKE_UI_RC=0 FAKE_UI_VALUE=dark hostreq dark-ok dark ok
+FAKE_UI_RC=44 FAKE_UI_VALUE=dark hostreq dark-rc44 dark "fail rc=44"
+FAKE_PRIV_RC=41 hostreq mic-rc41 revokemic "fail rc=41"
+
+PIDFILE=$TMP/stub.pid; echo "$STUBPID" > "$PIDFILE"
+printf '200\n000\n' > "$TMP/seq-ok"
+FAKE_KILL_RC=0 FAKE_HTTP_SEQ="$TMP/seq-ok" hostreq stopstub-ok stopstub ok
+printf '200\n200\n' > "$TMP/seq-up"
+FAKE_KILL_RC=1 FAKE_HTTP_SEQ="$TMP/seq-up" hostreq stopstub-killrc1 stopstub "fail rc=1"
+PIDFILE=$TMP/absent.pid
+printf '200\n200\n' > "$TMP/seq-up2"
+FAKE_KILL_RC=0 FAKE_HTTP_SEQ="$TMP/seq-up2" hostreq stopstub-nopid stopstub "fail rc=98"
+
+# The action checkpoints are the line counts at the moment the test asked for them.
+want=$(( $(wc -l < "$TMP/requests.jsonl") ))
+FAKE_UI_RC=0 hostreq markpair markpair ok
+[ "$(tr -d '[:space:]' < "$TMP/host-markpair/pair-since" 2>/dev/null)" = "$want" ] \
+  && ok "ep16 markpair recorded the request-log checkpoint ($want)" || no "ep16 markpair checkpoint is not $want"
+FAKE_UI_RC=0 hostreq markopenurl markopenurl ok
+[ -f "$TMP/host-markopenurl/openurl-since" ] && ok "ep16 markopenurl recorded its own checkpoint" \
+  || no "ep16 markopenurl wrote no checkpoint"
+
+echo "== required-group verdict (episode 15)"
+vcase () { # <label> <mode> <xl outcome> <light outcome> <want rc>
+  local label=$1 mode=$2 xl=$3 li=$4 want=$5 d="$TMP/v-$1"
+  mkdir -p "$d/xl" "$d/light"
+  for g in xl light; do
+    printf 'GROUP_RESULT group=%s status=PASS executed=1\n' "$g" > "$d/$g/summary.txt"
+    printf 'shots logged=30 uploaded=30 unique_logged=30 missing=0 extra=0 required=30 named_required=19\nresult: ok\n' > "$d/$g/inventory.txt"
+  done
+  local rc=0
+  bash ci/UITests/verdict.sh "$mode" "$xl" "$li" "$d" > "$d.out" 2>&1 || rc=$?
+  if [ "$rc" -eq "$want" ]; then ok "ep15 $label rc=$rc"; else
+    no "ep15 $label rc=$rc want=$want: $(grep -m1 GROUP_FAILED "$d.out")"
+  fi
+}
+vcase all-both-success all success success 0
+vcase all-light-failed all success failure 1
+vcase all-both-skipped all skipped skipped 1
+vcase all-light-skipped all success skipped 1
+vcase all-xl-skipped all skipped success 1
+vcase xl-only xl success skipped 0
+vcase light-only light skipped success 0
+
+# A group whose evidence did not land cannot be green even with a success outcome.
+d="$TMP/v-missing-inventory"; mkdir -p "$d/xl" "$d/light"
+printf 'GROUP_RESULT group=xl status=PASS\n' > "$d/xl/summary.txt"
+printf 'GROUP_RESULT group=light status=PASS\n' > "$d/light/summary.txt"
+printf 'result: ok\n' > "$d/light/inventory.txt"
 rc=0
-rm -f "$TMP/noshots/shots/dry-02.png"
-GROUP_DRY=1 GROUP_DRY_LOG="$TMP/clean.log" GROUP_DRY_DIR="$TMP/noshots" MIN_SHOTS=0 \
-  bash ci/UITests/group_runner.sh light > "$TMP/lost.out" 2>&1 || rc=$?
-echo "logged shot missing from disk rc=$rc (want 1)"; grep -E "GROUP_REASON|^missing:" "$TMP/lost.out" | head -3
-[ "$rc" -ne 0 ] || FAIL=1
+bash ci/UITests/verdict.sh all success success "$d" > "$d.out" 2>&1 || rc=$?
+[ "$rc" -eq 1 ] && ok "ep15 missing inventory is red (rc=1)" || no "ep15 missing inventory rc=$rc want=1"
 
 echo "== local check outputs: $TMP"
 if [ "$FAIL" -eq 0 ]; then echo "LOCAL CHECK: PASS"; exit 0; fi

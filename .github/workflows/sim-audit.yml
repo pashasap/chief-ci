@@ -135,7 +135,19 @@ jobs:
           echo "TIMING build=$(( $(date +%s) - T0 ))s, at $(( $(date +%s) - JOB_T0 ))s"
           echo "swift warning lines: $(grep -cE '\.swift:[0-9]+:[0-9]+: warning:' $A/build.log)"
           grep -E '\.swift:[0-9]+:[0-9]+: warning:' $A/build.log | sed -E 's#^.*/(Core|Sources|ci)/#\1/#' | sort -u | head -30
-          /usr/libexec/PlistBuddy -c 'Print' ci/DD/Build/Products/Debug-iphonesimulator/Kit.app/Info.plist | grep -E "CFBundle(DisplayName|Identifier|URLSchemes)|chief|MinimumOS|Microphone|Speech" || true
+          PLIST=ci/DD/Build/Products/Debug-iphonesimulator/Kit.app/Info.plist
+          /usr/libexec/PlistBuddy -c 'Print' "$PLIST" | grep -E "CFBundle(DisplayName|Identifier|URLSchemes)|chief|MinimumOS|Microphone|Speech" || true
+          # Orientation policy as built. A landscape pass counts only if the app window really rotates, so record what
+          # the packaged app declares for both families next to the geometry the test logs.
+          for k in UISupportedInterfaceOrientations "UISupportedInterfaceOrientations~ipad"; do
+            echo "plist $k: $(/usr/libexec/PlistBuddy -c "Print :$k" "$PLIST" 2>&1 | tr '\n' ' ')"
+          done
+          # Source identity: a sorted per-file SHA-256 of both roots plus the commit, so the artifacts can be tied to
+          # the exact tree that produced them instead of to a branch name.
+          { find Core/Sources/Core Sources/App -type f -print0 | sort -z | xargs -0 shasum -a 256
+            echo "git-head $(git rev-parse HEAD)"; } > $A/source-manifest.txt
+          echo "source manifest: $(wc -l < $A/source-manifest.txt | tr -d ' ') lines, digest $(shasum -a 256 $A/source-manifest.txt | cut -d' ' -f1)"
+          head -3 $A/source-manifest.txt
           ls ci/DD/Build/Products/
           ls ci/DD/Build/Products/*.xctestrun > /dev/null 2>&1 || { echo "no xctestrun produced"; exit 1; }
 
@@ -185,6 +197,7 @@ jobs:
             ci/artifacts/device.txt
             ci/artifacts/cert.txt
             ci/artifacts/build.log
+            ci/artifacts/source-manifest.txt
             ci/artifacts/requests.jsonl
             ci/artifacts/xl/**
 
@@ -209,28 +222,27 @@ jobs:
           if-no-files-found: error
           path: |
             ci/artifacts/device.txt
+            ci/artifacts/source-manifest.txt
             ci/artifacts/requests.jsonl
             ci/artifacts/light/**
 
       # ---- verdict: the only place that decides the job's colour ------------------------------------------
-      - name: Verdict (a failed or missing group makes the job red)
+      - name: Verdict (a required group that did not run, did not pass or lost its evidence makes the job red)
         if: always()
         timeout-minutes: 2
         run: |
           set +e
           A=ci/artifacts
           XL="${{ steps.xl.outcome }}"; LI="${{ steps.light.outcome }}"
-          echo "group outcomes: xl=$XL light=$LI group=$AUDIT_GROUP"
-          FAIL=0; RAN=0
+          echo "group outcomes: xl=$XL light=$LI requested=$AUDIT_GROUP"
+          FAIL=0
+          # Required groups follow the request (all -> xl and light). The gate replays this exact script offline.
+          bash ci/UITests/verdict.sh "$AUDIT_GROUP" "$XL" "$LI" "$A" || FAIL=1
           for g in xl light; do
-            case "$g" in xl) O=$XL;; light) O=$LI;; esac
-            [ "$O" = "skipped" ] && { echo "GROUP_SKIPPED $g"; continue; }
-            RAN=$((RAN+1))
-            [ -f "$A/$g/summary.txt" ] && cat "$A/$g/summary.txt"
-            if [ "$O" != "success" ]; then echo "GROUP_FAILED $g outcome=$O"; FAIL=1; fi
+            [ -f "$A/$g/pairing.txt" ] && { echo "--- $A/$g/pairing.txt"; cat "$A/$g/pairing.txt"; }
+            [ -f "$A/$g/xcresult-summary.txt" ] && { echo "--- $A/$g/xcresult-summary.txt"; head -40 "$A/$g/xcresult-summary.txt"; }
           done
-          if [ "$RAN" -eq 0 ]; then echo "no group ran"; FAIL=1; fi
-          for f in $A/xl/inventory.txt $A/light/inventory.txt; do [ -f "$f" ] && { echo "--- $f"; cat "$f"; }; done
+          [ -f "$A/source-manifest.txt" ] && { echo "--- source manifest"; tail -1 "$A/source-manifest.txt"; }
           echo "requests: $(wc -l < $A/requests.jsonl 2>/dev/null)"
           python3 -c "import json,sys; [print(e.get('method'), e.get('path'), e.get('status'), e.get('note','')) for e in map(json.loads, open(sys.argv[1]))]" $A/requests.jsonl 2>/dev/null | uniq -c | head -80
           xcrun simctl shutdown "$SIM_UDID" || true

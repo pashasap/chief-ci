@@ -6,6 +6,10 @@ snapshot fetch answered 200/304. The workflow's own `curl` health probes carry `
 application/x-kit-probe`, so a probe can never stand in for the app. The visible "Paired" label is never read
 here: a silent label must not fail a paired device, and a label alone must not pass an unpaired one.
 
+`--since` is the caller's checkpoint. The runner passes an action-specific one for a pairing claim (the line count
+recorded when the typed-link or deep-link action started) and reserves `--allow-earlier-snapshot` for an explicit
+persisted-session check, so a session that was already paired cannot be reported as a fresh pairing.
+
 Usage:
   pairing_status.py --log requests.jsonl --since 0 [--wait 30] [--allow-earlier-snapshot] --out /tmp/kitctl/x-status
   pairing_status.py --self-test

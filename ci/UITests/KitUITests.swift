@@ -8,13 +8,18 @@ import XCTest
 ///   testXLOfflineLandscape - accessibility XL + XXXL, mic denied, offline, landscape
 ///   testLightActions       - light-mode actions, sheets, Share, typed capture, dark mode
 /// Host-only work (appearance, deep link, stub stop, mic revoke, request-log pairing verdict) is requested as
-/// "KIT ... REQUEST <x>"; the workflow performs it and touches /tmp/kitctl/<x>-ok. Pairing is judged from the
-/// stub request log by ci/UITests/pairing_status.py, which writes /tmp/kitctl/<x>-status ("paired"|"notpaired").
+/// "KIT ... REQUEST <x>"; the workflow performs it, verifies the resulting condition and writes
+/// /tmp/kitctl/<x>-result ("ok" or "fail rc=..."), creating /tmp/kitctl/<x>-ok only when it verified. Pairing is
+/// judged from the stub request log by ci/UITests/pairing_status.py, which writes /tmp/kitctl/<x>-status
+/// ("paired"|"notpaired") from the action-specific checkpoint the host recorded when the action started.
 final class KitUITests: XCTestCase {
     static let link = "chief://pair?base=https%3A%2F%2Flocalhost%3A8443&token=kit-sim-invented-token-0001"
     static let largerText = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXL"]
     static let xxxlText = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+    static let bottomBar = ["Inbox", "Today", "Brief", "Settings"]
     let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+    /// Height of the Record button at the group's own text size, so the XL and XXXL stops can report their ratio.
+    var baseRecordHeight: CGFloat = 0
 
     override func setUpWithError() throws { continueAfterFailure = true }
 
@@ -31,6 +36,7 @@ final class KitUITests: XCTestCase {
             note("launched=\(up) state=\(app.state.rawValue)")
             sleep(2)
             shot("xl-01-unpaired-inbox")
+            scaleProbe(app, "baseline", nil)
             dump(app, "xl-unpaired-inbox")
         }
 
@@ -43,6 +49,7 @@ final class KitUITests: XCTestCase {
             note("relaunched xl=\(app.buttons["Record a capture"].waitForExistence(timeout: 30))")
             tab(app, "Inbox"); _ = waitText(app, "building manager", timeout: 20); sleep(2)
             shot("50-xl-inbox")
+            scaleProbe(app, "xl", "effective_scale_xl")
             frames(app, ["Approve", "Reject", "Change", "Record a capture", "Inbox", "Today", "Brief", "Settings"])
             dump(app, "xl-inbox")
             for i in 1...4 { app.swipeUp(); usleep(800_000); shot("51-xl-inbox-scroll-\(i)") }
@@ -67,15 +74,25 @@ final class KitUITests: XCTestCase {
             note("relaunched xxxl=\(app.buttons["Record a capture"].waitForExistence(timeout: 30))")
             tab(app, "Inbox"); sleep(2)
             shot("50b-xxxl-inbox")
+            scaleProbe(app, "xxxl", "effective_scale_xxxl")
             frames(app, ["Approve", "Reject", "Change", "Record a capture", "Inbox", "Today", "Brief", "Settings"])
+            assertBottomBar(app)
             dump(app, "xxxl-inbox")
             app.swipeUp(); sleep(1); shot("51b-xxxl-inbox-scrolled")
 
             tab(app, "Today"); sleep(1)
-            _ = app.segmentedControls.firstMatch.waitForExistence(timeout: 10)
+            let control = app.segmentedControls.firstMatch
+            let controlAppeared = control.waitForExistence(timeout: 10)
+            XCTAssertTrue(controlAppeared, "Today segmented control did not appear at XXXL")
             shot("52b-xxxl-today")
             dump(app, "xxxl-today")
-            let segments = app.segmentedControls.firstMatch.buttons
+            let segments = control.buttons
+            note("segments count=\(segments.count)")
+            XCTAssertGreaterThanOrEqual(segments.count, 4, "Today shows \(segments.count) segment(s), four expected at XXXL")
+            for i in 0..<min(4, segments.count) {
+                let seg = segments.element(boundBy: i)
+                note("segment \(i + 1) label=\(seg.label) selected=\(seg.isSelected)")
+            }
             for i in 1..<4 where segments.count > i {
                 segments.element(boundBy: i).tap(); sleep(1)
                 shot("52b-xxxl-today-seg-\(i + 1)")
@@ -83,7 +100,14 @@ final class KitUITests: XCTestCase {
             if segments.count > 0 { segments.element(boundBy: 0).tap(); sleep(1) }
             app.swipeUp(); sleep(1); shot("53b-xxxl-today-scrolled")
 
-            let record = app.buttons["Record a capture"]
+            let record = app.buttons["Record a capture"].firstMatch
+            if record.exists {
+                let b = record.frame
+                note("record exists=true frame=\(Int(b.minX)),\(Int(b.minY)) \(Int(b.width))x\(Int(b.height)) hittable=\(record.isHittable)")
+            } else {
+                note("record exists=false")
+            }
+            XCTAssertTrue(record.exists, "Record a capture button missing at XXXL")
             if record.exists {
                 record.tap(); sleep(2)
                 let allow = springboard.alerts.buttons["Allow"].firstMatch
@@ -139,8 +163,13 @@ final class KitUITests: XCTestCase {
         }
 
         step("16 landscape cached screens") {
+            let windowBefore = app.windows.firstMatch.frame
+            note("window_before \(Int(windowBefore.minX)),\(Int(windowBefore.minY)) \(Int(windowBefore.width))x\(Int(windowBefore.height))")
             XCUIDevice.shared.orientation = .landscapeLeft
-            sleep(2)
+            sleep(3)
+            let windowAfter = app.windows.firstMatch.frame
+            note("window_after \(Int(windowAfter.minX)),\(Int(windowAfter.minY)) \(Int(windowAfter.width))x\(Int(windowAfter.height))")
+            note("landscape_viewport=\(windowAfter.width > windowAfter.height)")
             tab(app, "Inbox"); toTop(app); shot("80-landscape-inbox"); frames(app, ["Record a capture", "Inbox", "Today", "Settings"])
             tab(app, "Today"); shot("81-landscape-today")
             tab(app, "Brief"); shot("82-landscape-brief")
@@ -162,6 +191,7 @@ final class KitUITests: XCTestCase {
             note("launched=\(up) state=\(app.state.rawValue)")
             sleep(2)
             shot("01-first-screen")
+            scaleProbe(app, "baseline-light", nil)
             dump(app, "first-screen")
         }
 
@@ -420,19 +450,24 @@ final class KitUITests: XCTestCase {
         step("02 pair by typing the link in Settings and confirm from the request log") {
             tab(app, "Settings")
             shot("\(prefix)02-settings-before-pair")
+            // The checkpoint is recorded before anything is typed, so the verdict can only rest on records this
+            // action produced; a persisted session cannot stand in for the Settings action (episode 16).
+            request("markpair")
             let byLabel = NSPredicate(format: "label == 'Pairing link' OR placeholderValue == 'Pairing link'")
             var field = app.textFields.matching(byLabel).firstMatch
             for _ in 0..<6 where !field.exists && !app.textViews.matching(byLabel).firstMatch.exists {
                 app.swipeUp(); usleep(600_000)
             }
             if !field.exists { field = app.textViews.matching(byLabel).firstMatch }
-            note("pairing field exists=\(field.exists)")
+            note("pairing field exists=\(field.exists) hittable=\(field.exists && field.isHittable)")
+            XCTAssertTrue(field.exists, "Pairing link field not found in Settings")
             if field.exists {
                 field.tap(); usleep(500_000)
                 field.typeText(Self.link)
                 shot("\(prefix)03-link-typed")
                 let pair = app.buttons["Pair with this link"]
                 note("pair button exists=\(pair.exists) hittable=\(pair.exists && pair.isHittable)")
+                XCTAssertTrue(pair.exists && pair.isHittable, "Pair with this link is not hittable")
                 if pair.exists { pair.tap() }
             }
             dismissKeyboard(app)
@@ -448,6 +483,7 @@ final class KitUITests: XCTestCase {
             note("request-log pairing checkpair=\(logPaired)")
 
             if !logPaired {
+                request("markopenurl")
                 request("openurl")
                 for name in ["Open", "Öffnen"] where springboard.buttons[name].waitForExistence(timeout: 4) {
                     shot("\(prefix)03b-openurl-confirmation"); springboard.buttons[name].tap(); break
@@ -592,14 +628,54 @@ final class KitUITests: XCTestCase {
         }
     }
 
-    /// Frames of the named buttons, to judge squeezing and clipping alongside the pixels.
+    /// Frames of the named buttons, to judge squeezing and clipping alongside the pixels. For a bottom-bar
+    /// destination the bottommost match is the bar control itself, so it is logged on its own line with its size
+    /// and hittability instead of being averaged in with same-labelled buttons from the content area.
     @MainActor private func frames(_ app: XCUIApplication, _ labels: [String]) {
         for label in labels {
             let els = app.buttons.matching(NSPredicate(format: "label == %@ OR label BEGINSWITH %@", label, label + ","))
-                .allElementsBoundByIndex.prefix(3)
-            note("frames \(label): " + els.map { "\(Int($0.frame.minX)),\(Int($0.frame.minY)) \(Int($0.frame.width))x\(Int($0.frame.height))" }.joined(separator: " ; "))
+                .allElementsBoundByIndex
+            note("frames \(label): " + els.prefix(3).map {
+                "\(Int($0.frame.minX)),\(Int($0.frame.minY)) \(Int($0.frame.width))x\(Int($0.frame.height)) hittable=\($0.isHittable)"
+            }.joined(separator: " ; "))
+            if Self.bottomBar.contains(label), let bar = els.max(by: { $0.frame.minY < $1.frame.minY }) {
+                note("bottom_bar \(label): \(Int(bar.frame.minX)),\(Int(bar.frame.minY)) \(Int(bar.frame.width))x\(Int(bar.frame.height)) hittable=\(bar.isHittable) min44=\(bar.frame.width >= 44 && bar.frame.height >= 44)")
+            }
         }
         note("window \(app.windows.firstMatch.frame)")
+    }
+
+    /// Each bottom-bar destination must resolve to one hittable control of at least 44x44 pt. The bar control is the
+    /// bottommost match, because a screen can also show a same-labelled button higher up.
+    @MainActor private func assertBottomBar(_ app: XCUIApplication) {
+        for label in Self.bottomBar {
+            let candidates = app.buttons.matching(NSPredicate(format: "label == %@ OR label BEGINSWITH %@", label, label + ","))
+                .allElementsBoundByIndex
+            guard let bar = candidates.max(by: { $0.frame.minY < $1.frame.minY }), bar.exists else {
+                XCTFail("bottom bar destination \(label) not found")
+                continue
+            }
+            note("bottom_bar_check \(label): \(Int(bar.frame.minX)),\(Int(bar.frame.minY)) \(Int(bar.frame.width))x\(Int(bar.frame.height)) hittable=\(bar.isHittable)")
+            XCTAssertTrue(bar.isHittable, "bottom bar \(label) is not hittable")
+            XCTAssertTrue(bar.frame.width >= 44 && bar.frame.height >= 44,
+                          "bottom bar \(label) is \(Int(bar.frame.width))x\(Int(bar.frame.height)) pt, under the 44 pt target")
+        }
+    }
+
+    /// Requests a Dynamic Type category through launch arguments and records what the app actually rendered: the
+    /// arguments, the measured heights of the Record button, the Inbox tab and a body label, and the ratio of the
+    /// Record height to the group's baseline. A flag on its own is not evidence of the effective text size
+    /// (episode 22); the measured heights are what the auditor compares with the pixels.
+    @MainActor private func scaleProbe(_ app: XCUIApplication, _ tag: String, _ name: String?) {
+        let record = app.buttons["Record a capture"].firstMatch
+        let inbox = app.buttons.matching(NSPredicate(format: "label == 'Inbox' OR label BEGINSWITH 'Inbox,'"))
+            .allElementsBoundByIndex.max(by: { $0.frame.minY < $1.frame.minY })
+        let body = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "building manager")).firstMatch
+        let recordHeight = record.exists ? record.frame.height : 0
+        if baseRecordHeight == 0 && recordHeight > 0 { baseRecordHeight = recordHeight }
+        let ratio = baseRecordHeight > 0 ? recordHeight / baseRecordHeight : 0
+        note("scaleprobe tag=\(tag) launchArguments=\(app.launchArguments) record_height=\(Int(recordHeight)) inbox_height=\(Int(inbox?.frame.height ?? 0)) text_height=\(Int(body.exists ? body.frame.height : 0)) baseline_height=\(Int(baseRecordHeight))")
+        if let name { note("\(name)=\(String(format: "%.2f", ratio))") }
     }
 
     /// Visible labels from one hierarchy snapshot, for comparing with the pixels.
@@ -614,13 +690,27 @@ final class KitUITests: XCTestCase {
         note("dump \(tag): " + lines.prefix(80).joined(separator: " | "))
     }
 
-    /// Asks the host (the workflow) to do something only it can do, and waits for the acknowledgement.
-    private func request(_ what: String) {
-        let ok = URL(fileURLWithPath: "/tmp/kitctl/\(what)-ok")
+    /// Asks the host (the workflow) to do something only it can do, waits for the per-request result and returns
+    /// whether the host verified the resulting condition. A host that only ran a command writes "fail rc=...", so a
+    /// request can no longer look acknowledged after a failed simctl call. The stops that depend on the condition
+    /// fail the test here instead of continuing with an unproven device state (episode 19).
+    @discardableResult
+    private func request(_ what: String) -> Bool {
+        let result = URL(fileURLWithPath: "/tmp/kitctl/\(what)-result")
         note("REQUEST \(what)")
-        for _ in 0..<60 where !FileManager.default.fileExists(atPath: ok.path) { usleep(500_000) }
-        note("REQUEST \(what) acknowledged=\(FileManager.default.fileExists(atPath: ok.path))")
+        for _ in 0..<60 where !FileManager.default.fileExists(atPath: result.path) { usleep(500_000) }
+        let raw = (try? String(contentsOf: result, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let ok = raw == "ok"
+        note("REQUEST \(what) result=\(raw.isEmpty ? "absent" : raw) ok=\(ok)")
+        switch what {
+        case "dark", "revokemic", "stopstub", "markpair", "markopenurl":
+            XCTAssertTrue(ok, "host request \(what) did not verify (\(raw.isEmpty ? "no result file" : raw)); the condition this stop depends on is unproven")
+        default:
+            break
+        }
         sleep(2)
+        return ok
     }
 
     private func note(_ line: String) {
