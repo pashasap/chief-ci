@@ -343,7 +343,7 @@ final class KitUITests: XCTestCase {
                 return
             }
             let draft = resultSheet.buttons["Open the draft"]
-            if scrollTo(resultSheet, draft, container: resultSheet) { draft.tap(); sleep(3) }
+            if scrollTo(app, draft, container: resultSheet) { draft.tap(); sleep(3) }
             resultSheet.swipeUp(); sleep(1)
             shot("25-result-sheet-draft")
 
