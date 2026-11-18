@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Decides the job's colour from the requested stop group and the observed step outcomes.
 #
-#   bash ci/UITests/verdict.sh <all|xl-layout|xl-environment|light> \
+#   bash ci/UITests/verdict.sh <all|xl|xl-layout|xl-environment|light> \
 #        <xl-layout outcome> <xl-environment outcome> <light outcome> <artifacts dir>
 #
-# The required groups follow the request: all -> xl-layout, xl-environment and light; a single group -> only that
-# group. A required group passes only when its step outcome is exactly "success" AND the evidence it must archive is
+# all requires all three groups; xl requires layout and environment; a single group requires only that group. A required group passes only when its step outcome is exactly "success" AND the evidence it must archive is
 # present: summary.txt with a status=PASS line, inventory.txt with a "result: ok" line. A skipped, blank or failed
 # outcome fails, so a mode can never be satisfied by a group that never ran, and a group that lost its evidence
 # cannot look green.
@@ -25,6 +24,7 @@ FAIL=0
 
 case "$MODE" in
   all)          REQUIRED=$ALL_GROUPS ;;
+  xl)           REQUIRED="xl-layout xl-environment" ;;
   xl-layout)    REQUIRED="xl-layout" ;;
   xl-environment) REQUIRED="xl-environment" ;;
   light)        REQUIRED="light" ;;

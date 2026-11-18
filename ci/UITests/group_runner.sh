@@ -83,8 +83,8 @@ echo "paths group=$GROUP ctl=$CTL shots=$SHOTS artifacts=$A dry=$DRY"
 echo "required_shots=${RS:-none}"
 
 health () {
-  curl -s --max-time 5 -o /dev/null -w "stub health http=%{http_code} $1\n" --cacert "$CERT/ca.pem" \
-    -H "Authorization: Bearer ***" -H 'Content-Type: application/x-kit-probe' \
+  curl -fs --max-time 5 -o /dev/null -w "stub health http=%{http_code} $1\n" --cacert "$CERT/ca.pem" \
+    -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/x-kit-probe' \
     https://localhost:8443/v1/health
 }
 
@@ -173,7 +173,10 @@ if [ "$DRY" != "1" ]; then
   # Group light needs the microphone granted again: the XL group revokes it to prove the denied path.
   [ "$GROUP" = "light" ] && xcrun simctl privacy "$SIM" grant microphone com.example.Chief 2>/dev/null
   start_stub
-  health start
+  if ! health start; then
+    printf "GROUP_RESULT group=%s status=FAIL executed=0\nGROUP_REASON authenticated stub health preflight failed\n" "$GROUP" > "$A/summary.txt"
+    exit 1
+  fi
 fi
 
 BASE=$( [ -f "$REQLOG" ] && wc -l < "$REQLOG" || echo 0 )
@@ -193,6 +196,7 @@ else
   rm -rf "$RESULT"
   NSUnbufferedIO=YES xcodebuild test-without-building -xctestrun "$XTR" \
     -destination "platform=iOS Simulator,id=$SIM" \
+    -parallel-testing-enabled NO \
     -resultBundlePath "$RESULT" \
     -only-testing:"KitUITests/KitUITests/$TEST_NAME" > "$LOG" 2>&1 &
   PID=$!
@@ -200,7 +204,7 @@ else
 fi
 
 if [ -n "$PID" ]; then
-  last=""; same=0; done_at=0; i=0
+  last=""; same=0; i=0
   while kill -0 "$PID" 2>/dev/null; do
     sleep 1; i=$((i+1))
     if [ $(( $(date +%s) - T0 )) -gt "$BUDGET" ]; then
@@ -209,14 +213,10 @@ if [ -n "$PID" ]; then
       xcrun simctl io "$SIM" screenshot "$A/stall/cutoff.png" > /dev/null 2>&1
       break
     fi
-    if [ "$done_at" -eq 0 ] && grep -qE "Test Case .*(passed|failed|skipped)" "$LOG"; then done_at=$i; fi
-    if [ "$done_at" -gt 0 ] && [ $((i - done_at)) -ge 8 ]; then
-      echo "test finished; stopping lingering xcodebuild"; break
-    fi
-    # A checkpoint request must be handled before the request that reads it, so mark* goes first even when both
-    # appeared in the same second.
-    REQS=$(grep -oE "REQUEST [a-z]+$" "$LOG" | awk '{print $2}' | sort -u)
-    for req in $(printf '%s\n' $REQS | grep '^mark' 2>/dev/null) $(printf '%s\n' $REQS | grep -v '^mark' 2>/dev/null); do
+    # Wait for the process to finish writing its result bundle, not just for the XCTest case line.
+    # Preserve request order even when several requests appear in one poll (checkpoint, open URL, verify).
+    REQS=$(grep -oE "REQUEST [a-z]+$" "$LOG" | awk '!seen[$2]++ {print $2}')
+    for req in $REQS; do
       [ -f "$CTL/$req-result" ] && continue
       do_request "$req"
     done

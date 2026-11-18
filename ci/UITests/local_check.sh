@@ -213,6 +213,12 @@ esac
 SHIM
 cat > "$BIN/curl" <<'SHIM'
 #!/usr/bin/env bash
+if [ "${FAKE_CHECK_AUTH:-0}" = 1 ]; then
+  case "$*" in
+    *"Authorization: Bearer tok"*"Content-Type: application/x-kit-probe"*) ;;
+    *) printf '401'; exit 0 ;;
+  esac
+fi
 if [ -n "${FAKE_HTTP_SEQ:-}" ] && [ -s "${FAKE_HTTP_SEQ}" ]; then
   v=$(head -1 "$FAKE_HTTP_SEQ")
   tail -n +2 "$FAKE_HTTP_SEQ" > "$FAKE_HTTP_SEQ.next"
@@ -261,7 +267,7 @@ FAKE_PRIV_RC=41 hostreq mic-rc41 revokemic "fail rc=41"
 
 PIDFILE=$TMP/stub.pid; echo "$STUBPID" > "$PIDFILE"
 printf '200\n000\n' > "$TMP/seq-ok"
-FAKE_KILL_RC=0 FAKE_HTTP_SEQ="$TMP/seq-ok" hostreq stopstub-ok stopstub ok
+FAKE_CHECK_AUTH=1 FAKE_KILL_RC=0 FAKE_HTTP_SEQ="$TMP/seq-ok" hostreq stopstub-ok stopstub ok
 printf '200\n200\n' > "$TMP/seq-up"
 FAKE_KILL_RC=1 FAKE_HTTP_SEQ="$TMP/seq-up" hostreq stopstub-killrc1 stopstub "fail rc=1"
 PIDFILE=$TMP/absent.pid
@@ -296,6 +302,8 @@ vcase all-light-failed all success success failure 1
 vcase all-environment-skipped all success skipped success 1
 vcase all-layout-skipped all skipped success success 1
 vcase all-both-skipped all skipped skipped skipped 1
+vcase xl-both-no-light xl success success skipped 0
+vcase xl-both-missing-environment xl success skipped skipped 1
 vcase xl-layout-only xl-layout success skipped skipped 0
 vcase xl-environment-only xl-environment skipped success skipped 0
 vcase light-only light skipped skipped success 0

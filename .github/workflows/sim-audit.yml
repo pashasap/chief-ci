@@ -26,7 +26,7 @@ on:
       group:
         description: Stop group
         type: choice
-        options: [all, xl-layout, xl-environment, light]
+        options: [all, xl, xl-layout, xl-environment, light]
         default: all
       build_only:
         description: Compile the UI-test bundle and stop (a harness check, never an audit run)
@@ -188,7 +188,7 @@ jobs:
       # ---- group 1: XL and XXXL layout (first, so the night's primary evidence cannot be lost) ---------------
       - name: Group XL/XXXL layout (own timeout, own artifacts)
         id: xl_layout
-        if: ${{ github.event_name == 'workflow_dispatch' && (env.AUDIT_GROUP == 'all' || env.AUDIT_GROUP == 'xl-layout') && inputs.build_only != true }}
+        if: ${{ github.event_name == 'workflow_dispatch' && (env.AUDIT_GROUP == 'all' || env.AUDIT_GROUP == 'xl' || env.AUDIT_GROUP == 'xl-layout') && inputs.build_only != true }}
         timeout-minutes: 16
         continue-on-error: true
         env:
@@ -215,7 +215,7 @@ jobs:
       # ---- group 2: environment (mic denied, offline, landscape) ----------------------------------------------
       - name: Group environment/mic-denied/offline/landscape (own timeout, own artifacts)
         id: xl_env
-        if: ${{ github.event_name == 'workflow_dispatch' && (env.AUDIT_GROUP == 'all' || env.AUDIT_GROUP == 'xl-environment') && inputs.build_only != true }}
+        if: ${{ github.event_name == 'workflow_dispatch' && (env.AUDIT_GROUP == 'all' || env.AUDIT_GROUP == 'xl' || env.AUDIT_GROUP == 'xl-environment') && inputs.build_only != true }}
         timeout-minutes: 10
         continue-on-error: true
         env:
@@ -273,7 +273,7 @@ jobs:
           LI="${{ steps.light.outcome }}"
           echo "group outcomes: xl-layout=${XL:-<blank>} xl-environment=${EN:-<blank>} light=${LI:-<blank>} requested=$AUDIT_GROUP"
           FAIL=0
-          # Required groups follow the request (all -> the three groups). The gate replays this exact script offline.
+          # Required groups follow the request (all -> all three; xl -> layout and environment only).
           bash ci/UITests/verdict.sh "$AUDIT_GROUP" "$XL" "$EN" "$LI" "$A" || FAIL=1
           for g in xl-layout xl-environment light; do
             [ -f "$A/$g/pairing.txt" ] && { echo "--- $A/$g/pairing.txt"; cat "$A/$g/pairing.txt"; }
