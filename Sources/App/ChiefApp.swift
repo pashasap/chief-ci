@@ -137,8 +137,9 @@ struct RootView: View {
                     tabLabel(item, screen)
                 }
                 .foregroundStyle(isSelected(item.kind, selected) ? Theme.accent : Theme.secondaryText)
-                .frame(minWidth: item.minimumWidth, minHeight: item.minimumHeight,
+                .frame(minWidth: screen.scalableText ? 46 : item.minimumWidth, minHeight: item.minimumHeight,
                     alignment: item.iconTopAligned ? .top : .center)
+                .contentShape(Rectangle())
             }
         }
         .disabled(!item.isEnabled)
