@@ -43,20 +43,36 @@ public final class RecordingModel {
         self.osMajor = osMajor
     }
 
+    public var recordAvailability: RecordAvailability {
+        RecordAvailability(isEnabled: !isRecording && !isStarting && !isTranscribing && !store.hasPendingCapture)
+    }
+
+    public var isPanelPresented: Bool {
+        isTypingInstead || (!isClosed && (isStarting || isRecording || savedMessage != nil || message != nil))
+    }
+
+    public func closeTypedPanel() {
+        isTypingInstead = false
+        isClosed = true
+    }
+
     public func start() async {
-        guard !isRecording, !isStarting else { return }
-        if isTranscribing {
-            // The last capture is still being transcribed. Say so and reopen the screen with its Done control:
-            // a screen left closed here could never be dismissed.
-            message = Self.busyText
-            isClosed = false
-            return
-        }
+        guard recordAvailability.isEnabled else { return }
         isStarting = true
         defer { isStarting = false }
+        await beginRecording()
+    }
+
+    private func beginRecording() async {
+        resetPresentation()
+        let id = environment.ids.next().uuidString.lowercased()
+        guard persistStart(id) else { return }
+        await startRecorder(id)
+    }
+
+    private func resetPresentation() {
         lastSavedId = nil
         closeAt = nil
-        let id = environment.ids.next().uuidString.lowercased()
         message = nil
         savedMessage = nil
         transcript = ""
@@ -65,12 +81,20 @@ public final class RecordingModel {
         isClosed = false
         isConfirmingTypeInstead = false
         isTypingInstead = false
+        confirmingDiscard = false
+    }
+
+    private func persistStart(_ id: String) -> Bool {
         do {
             try store.save(.voice(clientId: id, recordedAt: environment.clock.now, durationS: 0))
+            return true
         } catch {
             message = "Could not save this recording"
-            return
+            return false
         }
+    }
+
+    private func startRecorder(_ id: String) async {
         pipeline.uploader.recordingId = id
         do {
             try await pipeline.recorder.start(clientId: id)
@@ -94,6 +118,17 @@ public final class RecordingModel {
         environment.haptics.recordingStarted()
     }
 
+    @ObservationIgnored private var tickTask: Task<Void, Never>?
+
+    /// An unstructured model-owned task survives panel removal and tab navigation.
+    public func requestTick() {
+        guard tickTask == nil else { return }
+        tickTask = Task { [self] in
+            await tick()
+            tickTask = nil
+        }
+    }
+
     public func tick() async {
         updateDelivery()
         if let closeAt, environment.clock.now >= closeAt { isClosed = true }
@@ -112,7 +147,7 @@ public final class RecordingModel {
         isRecording = false
         clientId = nil
         let duration = pipeline.recorder.elapsed
-        // A new recording may begin while this one is still being sent: leave its lease and its protection alone.
+        // Keep this capture protected until transcription has persisted its final metadata.
         defer {
             if !isRecording { environment.lease.end() }
             if pipeline.uploader.recordingId == id { pipeline.uploader.recordingId = nil }

@@ -24,11 +24,22 @@ public struct ItemDetailScreen {
     let corrections: CorrectionModel
     var drafts: InboxDrafts = InboxDrafts()
 
+    public var decisionGroup: SuggestionDecisionGroup? = nil
+    public var statusPosition: StatusPosition = .aboveActions
+    public var message: String? = nil
+    public var queuedLine: String? = nil
+    public var supplementaryElements: [InboxElement] { row?.supplementaryElements ?? [] }
+
     /// The screen for `handle`, as the app builds it.
     public static func make(handle: String, sources: ItemDetailSources, drafts: InboxDrafts) -> ItemDetailScreen {
-        ItemDetailScreen(
+        var screen = ItemDetailScreen(
             handle: handle, inbox: sources.inbox, decisions: sources.decisions,
             corrections: sources.corrections, drafts: drafts)
+        screen.decisionGroup = screen.row?.decisionGroup
+        screen.statusPosition = screen.row?.statusPosition ?? .aboveActions
+        screen.message = sources.decisions.message
+        screen.queuedLine = screen.row?.queuedLine
+        return screen
     }
 
     public var removeConfirmation: TaskSheetConfirmation? {
@@ -46,6 +57,9 @@ public struct ItemDetailScreen {
 
     /// Nil: the full text is never clamped.
     public var lineLimit: Int? { nil }
+
+    /// Reasons remain unclamped independently of the item's main text.
+    public var reasonLineLimit: Int? { nil }
 
     private var row: InboxScreenRow? {
         InboxRowBuilder(decisions: decisions, drafts: drafts).itemRow(handle: handle, snapshot: inbox.snapshot)

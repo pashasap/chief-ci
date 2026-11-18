@@ -56,8 +56,8 @@ final class AppEnvironment {
         let reminders = ReminderModel(center: notifications, provision: provision, preferences: UserDefaultsReminderPreference())
         self.reminders = reminders
         settings.reminders = reminders
-        loop = AppLoop(inbox: inbox, uploader: uploader, clock: clock, recording: recording, reminders: reminders,
-            settings: settings, typed: typed)
+        loop = AppLoop(inbox: inbox, uploader: uploader, clock: clock,
+            dependencies: AppLoopDependencies(recording: recording, reminders: reminders, settings: settings, typed: typed))
     }
 
     /// Sends what waits in the outbox, then refetches: on coming to the foreground and after a capture is saved.

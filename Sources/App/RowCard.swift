@@ -24,10 +24,10 @@ struct RowCard: View {
                 Text(row.text).foregroundStyle(Theme.text).lineLimit(row.lineLimit).wrapping()
             }
             if let because = row.displayedBecause {
-                Text(because).font(.callout).foregroundStyle(Theme.secondaryText).lineLimit(3).wrapping()
+                Text(because).font(.callout).foregroundStyle(Theme.secondaryText).lineLimit(row.reasonLineLimit).wrapping()
             }
             if let openSource { Button(row.sourceLabel, action: openSource).touchTarget() }
-            if let queued = row.queuedLine { Text(queued).font(.caption).foregroundStyle(Theme.secondaryText) }
+            if row.statusPosition == .aboveActions { decisionStatus }
             if let status = row.status { Text(status).font(.caption).foregroundStyle(Theme.secondaryText) }
             if let wait = row.waitLine { Text(wait).font(.caption).foregroundStyle(Theme.amber).wrapping() }
             ForEach(row.filedItems, id: \.handle) { item in
@@ -38,10 +38,10 @@ struct RowCard: View {
                 }
             }
             if let more = row.moreText { Text(more).font(.caption).foregroundStyle(Theme.secondaryText) }
-            if let caption = row.stateCaption {
-                Text(caption).font(.caption).foregroundStyle(row.state == .confirmed ? Theme.secondaryText : Theme.amber)
-            }
-            if row.stacksControls { elements }
+            if let group = row.decisionGroup { SuggestionActions(group: group, run: run) }
+            if row.statusPosition == .belowActions { stateCaption }
+            elements
+            if row.statusPosition == .belowActions { decisionStatus }
         }
         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         .padding(14)
@@ -49,9 +49,25 @@ struct RowCard: View {
         .contentShape(Rectangle())
     }
 
+    private var stateCaption: some View {
+        Group {
+            if let caption = row.stateCaption {
+                Text(caption).font(.caption).foregroundStyle(row.state == .confirmed ? Theme.secondaryText : Theme.amber)
+            }
+        }
+    }
+
+    private var decisionStatus: some View {
+        Group {
+            if row.statusPosition == .aboveActions { stateCaption }
+            if let notice = row.decisionNotice { Text(notice).foregroundStyle(Theme.amber).wrapping() }
+            if let queued = row.queuedLine { Text(queued).font(.caption).foregroundStyle(Theme.secondaryText) }
+        }
+    }
+
     private var elements: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(row.elements.enumerated()), id: \.offset) { _, element in
+            ForEach(Array(row.supplementaryElements.enumerated()), id: \.offset) { _, element in
                 switch element {
                 case .control(let control): ControlButton(control: control) { run(control.action) }
                 case .gap: Color.clear.frame(height: 16).accessibilityHidden(true)
@@ -70,14 +86,21 @@ struct ControlButton: View {
     let tap: () -> Void
 
     var body: some View {
-        Button(action: tap) {
-            Text(control.label).wrapping().frame(minHeight: 44)
+        Button(role: control.role == .destructive ? .destructive : nil, action: tap) {
+            Group {
+                if let icon = control.icon {
+                    Label(control.label, systemImage: icon.symbol)
+                } else {
+                    Text(control.label)
+                }
+            }
+            .wrapping().frame(minWidth: control.minimumWidth, minHeight: control.minimumHeight)
         }
         .buttonStyle(.bordered)
         .touchTarget()
         .tint(tint)
         .disabled(!control.isEnabled)
-        .accessibilityLabel(control.label)
+        .accessibilityLabel(control.accessibilityLabel.isEmpty ? control.label : control.accessibilityLabel)
         .accessibilityHint(control.disabledReason ?? "")
     }
 

@@ -127,12 +127,17 @@ struct InboxRowBuilder {
         row.lineLimit = nil
         row.sourceCaptureId = proposal.capture
         row.queuedLine = proposal.queuedLine
+        row.statusPosition = .belowActions
+        row.decisionNotice = gate.reason
         if proposal.state != "open" && gate.state == nil { return row }
-        row.elements = [
-            .control(make("Approve", .approve(handle), role: .primary, gate: gate)), .gap,
-            .control(make("Reject", .reject(handle), role: .destructive, gate: gate)),
-            .gap, .control(make("Change", .openChange(handle), gate: gate)),
+        let controls = [
+            make("Approve", .approve(handle), role: .primary, gate: gate),
+            make("Reject", .reject(handle), role: .destructive, gate: gate),
+            make("Change", .openChange(handle), gate: gate),
         ]
+        let deletion = make("Delete", .dropProposal(handle), role: .destructive, gate: gate)
+        row.decisionGroup = SuggestionDecisionGroup(controls: controls, deleteControl: deletion)
+        row.elements = (controls + [deletion]).map(InboxElement.control)
         if drafts.changeOpen.contains(handle) {
             row.elements += sendElements(handle, placeholder: "What should change?", action: .sendChange(handle), gate: gate)
         }
@@ -179,6 +184,6 @@ struct InboxRowBuilder {
         InboxControl(
             label: spec.label, role: spec.role, isEnabled: gate.enabled && spec.blocker == nil,
             disabledReason: gate.reason ?? (gate.enabled ? spec.blocker : nil), state: gate.controlState,
-            action: spec.action)
+            action: spec.action, icon: SuggestionIcon.forAction(spec.action), accessibilityLabel: spec.label)
     }
 }

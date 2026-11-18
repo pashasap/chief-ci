@@ -8,6 +8,7 @@ public enum ControlState: Equatable, Sendable { case idle, pending, failed }
 public enum InboxAction: Equatable, Hashable, Sendable {
     case approve(String)
     case reject(String)
+    case dropProposal(String)
     case openChange(String)
     case sendChange(String)
     case option(String, Int)
@@ -27,6 +28,14 @@ public enum InboxAction: Equatable, Hashable, Sendable {
     case markDone(String)
     case reopen(String)
     case closeWaiting(String)
+    case taskMore(String)
+    case closeTaskMore
+    /// Today Ideas: augment a candidate, research it, and delete it behind a confirmation.
+    case augmentIdea(String)
+    case researchIdea(String)
+    case deleteIdea(String)
+    case confirmDeleteIdea(String)
+    case cancelDeleteIdea(String)
     /// Task sheet: drop with confirmation, and the "Move it" choices.
     case dropTask(String)
     case confirmDrop(String)
@@ -44,6 +53,10 @@ public struct InboxControl: Equatable, Sendable {
     public var disabledReason: String?
     public var state: ControlState
     public var action: InboxAction
+    public var icon: SuggestionIcon? = nil
+    public var accessibilityLabel: String = ""
+    public var minimumWidth: Double = 44
+    public var minimumHeight: Double = 44
 }
 
 public struct InboxTextField: Equatable, Sendable {
@@ -69,12 +82,26 @@ public struct InboxScreenRow: Equatable, Sendable {
     public var status: String?
     public var recentIndex: Int?
     public var lineLimit: Int? = 3
+    /// Reasons stay complete independently of the row's main-text preview limit.
+    public var reasonLineLimit: Int? { nil }
     public var displayedBecause: String? { kicker == "Kit suggests" ? quotedBecause : because }
     public var quotedBecause: String? { because.map { "You said: “" + $0 + "”" } }
     public var sourceCaptureId: String?
     public var sourceLabel: String { "Source capture" }
     public var openCaptureLabel: String { "Open capture" }
-    public var stacksControls: Bool { true }
+    public var decisionGroup: SuggestionDecisionGroup?
+    public var statusPosition: StatusPosition = .aboveActions
+    public var decisionNotice: String?
+    public var stacksControls: Bool { decisionGroup == nil }
+    /// Elements not already rendered by the decision group.
+    public var supplementaryElements: [InboxElement] {
+        guard let decisionGroup else { return elements }
+        let grouped = decisionGroup.controls + [decisionGroup.deleteControl]
+        return elements.filter {
+            if case .control(let control) = $0 { return !grouped.contains(control) }
+            return true
+        }
+    }
     public var whenText: String?
     public var filedItems: [CapturePreview] = []
     public var moreText: String?

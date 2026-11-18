@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import Core
 
@@ -15,98 +16,147 @@ struct ChiefApp: App {
 
 struct RootView: View {
     let environment: AppEnvironment
-    @State private var showRecording = false
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var textSize
 
     var body: some View {
-        let coordinator = environment.coordinator
+        GeometryReader { proxy in
+            let layout = RecordingPanelLayout(width: proxy.size.width, height: proxy.size.height,
+                largestText: textSize.isAccessibilitySize)
+            VStack(spacing: 0) {
+                content(layout).frame(maxWidth: .infinity, maxHeight: .infinity)
+                if environment.recording.isPanelPresented {
+                    recordingPanel(layout)
+                }
+                bottomBar(selected: environment.coordinator.selectedTab, layout: layout)
+                    .frame(minHeight: layout.bottomBarHeight)
+            }
+        }
+        .tint(Theme.accent)
+        .task(id: scenePhase) {
+            if scenePhase == .active { await environment.loop.becameActive() }
+            else { environment.loop.leftForeground() }
+        }
+        .task(id: environment.loop.wakeKey) { await runLoop() }
+        .task { await monitorRecording() }
+        .task(id: environment.coordinator.recordRequested) {
+            if environment.coordinator.consumeRecordRequest() { present() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { _ in
+            Task { await environment.recording.handleInterruption() }
+        }
+        .onChange(of: environment.recording.isPanelPresented) { _, presented in
+            if !presented { Task { await environment.sync() } }
+        }
+    }
+
+    private func content(_ layout: RecordingPanelLayout) -> some View {
         VStack(spacing: 0) {
-            switch coordinator.selectedTab {
+            switch environment.coordinator.selectedTab {
             case .inbox: InboxView(environment: environment)
-            case .today: TodayView(model: environment.today, inbox: environment.inbox, environment: environment)
+            case .today: TodayView(model: environment.today, inbox: environment.inbox, environment: environment,
+                layoutSize: CGSize(width: layout.width, height: layout.height))
             case .brief: BriefView(environment: environment)
             case .settings: SettingsView(environment: environment)
             }
             ConfirmationBar(decisions: environment.decisions)
             KitLineBar { environment.uploader.kitBar }.padding(.horizontal, 16)
-            bottomBar(selected: coordinator.selectedTab)
         }
-        .tint(Theme.accent)
-        .fullScreenCover(isPresented: $showRecording, onDismiss: { Task { await environment.sync() } }) {
-            RecordView(environment: environment)
+    }
+
+    private func recordingPanel(_ layout: RecordingPanelLayout) -> some View {
+        let screen = RecordingScreen(model: environment.recording).presented(in: layout)
+        return RecordView(environment: environment, layout: layout)
+            .frame(height: layout.panelHeight, alignment: screen.anchor == .bottom ? .bottom : .center)
+            .allowsHitTesting(screen.presentation == .nonmodal && screen.backgroundInteractionEnabled)
+    }
+
+    private func runLoop() async {
+        while !Task.isCancelled, let delay = environment.loop.nextDelay() {
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard !Task.isCancelled else { return }
+            await environment.loop.tick()
         }
-        .task(id: scenePhase) {
-            if scenePhase == .active { await environment.loop.becameActive() }
-            else { environment.loop.leftForeground() }
-        }
-        .task(id: environment.loop.wakeKey) {
-            while !Task.isCancelled, let delay = environment.loop.nextDelay() {
-                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
-                guard !Task.isCancelled else { return }
-                await environment.loop.tick()
-            }
-        }
-        .task(id: coordinator.recordRequested) {
-            if coordinator.consumeRecordRequest() { present() }
+    }
+
+    private func monitorRecording() async {
+        while !Task.isCancelled {
+            // The saving task belongs to the model, not a panel or tab's task.
+            environment.recording.requestTick()
+            do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
         }
     }
 
     private func present() {
+        guard environment.recording.recordAvailability.isEnabled else { return }
         environment.typed.reopen()
-        showRecording = true
+        Task { await environment.recording.start() }
     }
 
-    private func bottomBar(selected: AppTab) -> some View {
-        HStack(alignment: .bottom) {
-            ForEach(BottomBarScreen(inboxCount: environment.inbox.needsYouCount).items, id: \.kind) { item in
-                barButton(item, selected: selected).frame(maxWidth: .infinity)
+    private func bottomBar(selected: AppTab, layout: RecordingPanelLayout) -> some View {
+        let availability: RecordAvailability = environment.recording.recordAvailability
+        let screen = BottomBarScreen(inboxCount: environment.inbox.needsYouCount,
+            availability: availability).presented(in: layout)
+        return HStack(alignment: .top, spacing: 4) {
+            ForEach(screen.items, id: \.kind) { item in
+                if item.raised {
+                    barButton(item, selected: selected, screen: screen)
+                } else {
+                    barButton(item, selected: selected, screen: screen).frame(maxWidth: .infinity)
+                }
             }
         }
-        .padding(.horizontal)
-        .padding(.top, 8)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
         .background(Theme.card.ignoresSafeArea(edges: .bottom))
     }
 
-    private func barButton(_ item: BottomBarItem, selected: AppTab) -> some View {
-        Button {
-            switch item.kind {
-            case .inbox: environment.coordinator.selectedTab = .inbox
-            case .today: environment.coordinator.selectedTab = .today
-            case .brief: environment.coordinator.selectedTab = .brief
-            case .settings: environment.coordinator.selectedTab = .settings
-            case .record: present()
-            }
-        } label: {
+    private func barButton(_ item: BottomBarItem, selected: AppTab, screen: BottomBarScreen) -> some View {
+        Button { select(item.kind) } label: {
             if item.raised {
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 28))
-                    .foregroundStyle(.white)
+                Image(systemName: item.symbol)
+                    .font(.title)
+                    .foregroundStyle(Theme.recordText)
                     .frame(width: item.size, height: item.size)
-                    .background(Theme.recordButton, in: Circle())
-                    .shadow(radius: 4, y: 2)
-                    .offset(y: -12)
+                    .background(Theme.color(item.tint), in: Circle())
             } else {
-                VStack(spacing: 2) {
-                    Image(systemName: icon(item.kind))
-                    HStack(spacing: 4) {
-                        Text(item.label).font(.caption)
-                        if let badge = item.badge { Text(badge).font(.caption.bold()).foregroundStyle(Theme.accent) }
+                VStack(spacing: item.badgeGap) {
+                    HStack(spacing: item.badgeGap) {
+                        Image(systemName: item.symbol)
+                        if item.reservesBadgeSpace || item.badge != nil { badgeSlot(item.badge) }
                     }
+                    Text(item.label)
+                        .font(.caption)
+                        .lineLimit(item.labelLineLimit)
+                        .minimumScaleFactor(screen.scalableText ? 0.65 : 1)
+                        .multilineTextAlignment(.center)
+                        .wrapping()
                 }
                 .foregroundStyle(isSelected(item.kind, selected) ? Theme.accent : Theme.secondaryText)
-                .frame(minWidth: item.size, minHeight: item.size)
+                .frame(minWidth: item.minimumWidth, minHeight: item.minimumHeight,
+                    alignment: item.iconTopAligned ? .top : .center)
             }
         }
+        .disabled(!item.isEnabled)
         .accessibilityLabel(item.accessibilityLabel)
     }
 
-    private func icon(_ kind: BottomBarKind) -> String {
+    @ViewBuilder private func badgeSlot(_ badge: String?) -> some View {
+        Text(badge ?? "0")
+            .font(.caption2.bold())
+            .foregroundStyle(Theme.accent)
+            .lineLimit(1)
+            .opacity(badge == nil ? 0 : 1)
+            .accessibilityHidden(true)
+    }
+
+    private func select(_ kind: BottomBarKind) {
         switch kind {
-        case .inbox: return "tray"
-        case .today: return "checklist"
-        case .brief: return "doc.text"
-        case .settings: return "gearshape"
-        case .record: return "mic.fill"
+        case .inbox: environment.coordinator.selectedTab = .inbox
+        case .today: environment.coordinator.selectedTab = .today
+        case .brief: environment.coordinator.selectedTab = .brief
+        case .settings: environment.coordinator.selectedTab = .settings
+        case .record: present()
         }
     }
 

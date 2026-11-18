@@ -32,13 +32,7 @@ struct TodayBuilder {
         ]
     }
 
-    func bar() -> TodayBar? {
-        guard let state = model.activeBar else { return nil }
-        let undo = InboxControl(
-            label: "Undo", role: .normal, isEnabled: decisions.canDecide,
-            disabledReason: decisions.cannotDecideReason, state: .idle, action: .reopen(state.handle))
-        return TodayBar(message: state.message, undo: undo)
-    }
+    func bar() -> TodayBar? { decisions.todayBar }
 
     // MARK: Tasks
 
@@ -55,13 +49,13 @@ struct TodayBuilder {
     }
 
     private func row(_ task: TaskItem) -> TodayTaskRow {
-        let note = task.note.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        // A tile shows its text without metadata codes and at most one action line; the codes stay in More.
         let struck = model.isKeptDone(task.handle)
         let state = decisions.state(for: task.handle)
-        var row = TodayTaskRow(handle: task.handle, text: task.text, pill: pill(task.when))
+        var row = TodayTaskRow(handle: task.handle, text: TaskTileText.text(task.text), pill: pill(task.when))
         row.overdueMark = overdue(task.when) ? "Overdue" : nil
-        row.note = note
-        row.noteLineLimit = note == nil ? nil : 2
+        row.note = TaskTileText.actionSummary(task.note)
+        row.noteLineLimit = row.note == nil ? nil : TaskTileText.summaryLineLimit
         row.isStruck = struck
         row.state = (state == .confirmed && !struck) ? nil : state
         row.controls = struck ? [] : taskControls(task.handle, state: state)
@@ -71,7 +65,9 @@ struct TodayBuilder {
     private func taskControls(_ handle: String, state: DecisionState?) -> [InboxControl] {
         let free = state == nil || state == .confirmed
         let done = control("Mark done", .markDone(handle), enabled: free)
-        return [done] + retryControls(handle)
+        let more = InboxControl(label: "More", role: .normal, isEnabled: true, state: .idle,
+            action: .taskMore(handle), icon: .more, accessibilityLabel: "More")
+        return [done, more] + retryControls(handle)
     }
 
     private func overdue(_ when: When?) -> Bool {
@@ -112,9 +108,7 @@ struct TodayBuilder {
     }
 
     private func ideasSegment() -> TodaySegment {
-        let open = (snapshot?.candidates ?? []).filter { $0.state == nil || $0.state == "open" }
-        let ideas = open.map { TodayIdeaRow(handle: $0.handle, text: $0.text, note: $0.note) }
-        return TodaySegment(title: "Ideas", count: ideas.count, ideas: ideas, intro: Self.ideasIntro)
+        TodayIdeaBuilder(model: model).segment()
     }
 
     // MARK: Controls
@@ -131,6 +125,6 @@ struct TodayBuilder {
         return InboxControl(
             label: label, role: role, isEnabled: allowed,
             disabledReason: decisions.canDecide ? nil : decisions.cannotDecideReason,
-            state: .idle, action: action)
+            state: .idle, action: action, icon: SuggestionIcon.forAction(action), accessibilityLabel: label)
     }
 }
