@@ -289,6 +289,19 @@ jobs:
       # A build-only dispatch is a harness check, never an audit run: it proves the UI-test bundle compiles on the
       # standard runner before an audit spends one of its two slots. On 18 November a single type error in the
       # harness cost an audit slot, and nothing on the Linux host that writes the harness can catch one.
+      - name: Upload build-only evidence
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.build_only == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: kit-build-only
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            ci/artifacts/build.log
+            ci/artifacts/build-strict-failed.log
+            ci/artifacts/source-manifest.txt
+            ci/artifacts/device.txt
+
       - name: Build-only result (compile check, no simulator, not an audit)
         if: always() && github.event_name == 'workflow_dispatch' && inputs.build_only == true
         timeout-minutes: 2
