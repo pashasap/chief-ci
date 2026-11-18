@@ -30,7 +30,7 @@ def task(handle, rev, text, w, capture, note=""):
 
 
 snapshot = {
-    "api": 1,
+    "api": 2,
     "generated_at": "2026-11-13T13:35:00Z",
     "today": "2026-11-13",
     "timezone": "Europe/Paris",

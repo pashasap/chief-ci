@@ -27,7 +27,7 @@ case "$GROUP" in
     TEST_NAME=testXLLayout
     BUDGET=${GROUP_BUDGET_S:-840}
     MIN=${MIN_SHOTS:-14}
-    REQUIRED_SHOTS="50-xl-inbox,57-xl-dark-inbox,50b-xxxl-inbox,51b-xxxl-inbox-scrolled,52b-xxxl-today,52b-xxxl-today-seg-2,52b-xxxl-today-seg-3,52b-xxxl-today-seg-4,53b-xxxl-today-scrolled,54b-xxxl-record,54-xl-brief,55-xl-settings,55b-xxxl-brief,56b-xxxl-settings"
+    REQUIRED_SHOTS="kit01a-after-api2-sync,kit01a-after-offline-relaunch,50-xl-inbox,57-xl-dark-inbox,50b-xxxl-inbox,51b-xxxl-inbox-scrolled,52b-xxxl-today,52b-xxxl-today-seg-2,52b-xxxl-today-seg-3,52b-xxxl-today-seg-4,53b-xxxl-today-scrolled,54b-xxxl-record,54-xl-brief,55-xl-settings,55b-xxxl-brief,56b-xxxl-settings"
     ;;
   xl-environment)
     TEST_NAME=testXLEnvironment
@@ -148,8 +148,28 @@ pairing () {
 }
 
 do_request () {
-  local req=$1 verdict
+  local req=$1 verdict store checkpoint rc=0
   case "$req" in
+    cacheonline|cacheoffline)
+      if [ "$req" = cacheoffline ] && { [ ! -f "$CTL/stopstub-ok" ] || health offline-check; }; then
+        rc=1
+        echo 'offline check failed: stub was not stopped or endpoint is reachable' >> "$A/record-cache.txt"
+      else
+        store=$(xcrun simctl get_app_container "$SIM" com.example.Chief data) || rc=1
+        checkpoint=$(cat "$CTL/openurl-since" 2>/dev/null || cat "$CTL/pair-since" 2>/dev/null) || rc=1
+        if [ "$rc" -eq 0 ]; then
+          python3 ci/UITests/record_cache_proof.py "$req" "$store" "$REQLOG" "$checkpoint" "$CTL/cache-before.json" \
+            >> "$A/record-cache.txt" 2>&1 || rc=1
+        fi
+      fi
+      if [ "$rc" -eq 0 ]; then printf 'ok\n' > "$CTL/$req-result"
+      else printf 'fail rc=1 read-only cache proof did not verify\n' > "$CTL/$req-result"; fi
+      ;;
+    restartstub)
+      start_stub >> "$A/record-cache.txt" 2>&1
+      if health restart >> "$A/record-cache.txt" 2>&1; then printf 'ok\n' > "$CTL/$req-result"
+      else printf 'fail rc=1 stub failed restart health check\n' > "$CTL/$req-result"; fi
+      ;;
     checkpair|checkpairtwo|checkpersisted)
       verdict=$(pairing "$req")
       if [ "$verdict" = "paired" ]; then

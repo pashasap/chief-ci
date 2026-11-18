@@ -41,6 +41,21 @@ final class KitUITests: XCTestCase {
         }
 
         pairAndConfirm(app, prefix: "xl-")
+        step("KIT-01A Record enabled after API 2 sync and after offline same-container relaunch") {
+            tab(app, "Inbox")
+            XCTAssertTrue(waitText(app, "building manager", timeout: 20), "Synthetic snapshot did not reach Inbox")
+            guard request("cacheonline") else { return }
+            assertRecordAtZero(app, proof: "kit01a-after-api2-sync")
+            guard request("stopstub") else { return }
+            app.terminate()
+            XCTAssertEqual(app.state, .notRunning, "Kit must terminate before the relaunch")
+            app.launch()
+            tab(app, "Inbox")
+            XCTAssertTrue(waitText(app, "building manager", timeout: 20), "Synthetic snapshot did not reload offline")
+            guard request("cacheoffline") else { return }
+            assertRecordAtZero(app, proof: "kit01a-after-offline-relaunch")
+            request("restartstub", timeout: 45)
+        }
 
         step("13a larger text XL light and dark") {
             app.terminate()
@@ -610,6 +625,25 @@ final class KitUITests: XCTestCase {
 
     // MARK: - Helpers
 
+    @MainActor private func assertRecordAtZero(_ app: XCUIApplication, proof: String) {
+        tab(app, "Settings")
+        let waiting = app.staticTexts["Waiting to send"].firstMatch
+        for _ in 0..<6 where !waiting.exists || !waiting.isHittable {
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.71))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.34))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+        let zeroInRow = waiting.exists && waiting.isHittable && app.staticTexts.matching(identifier: "0")
+            .allElementsBoundByIndex.contains { $0.isHittable && abs($0.frame.midY - waiting.frame.midY) < 15 }
+        XCTAssertTrue(zeroInRow, "The Settings Waiting to send row must show 0")
+        let record = recordControl(app)
+        let enabled = record.exists && record.isEnabled && record.isHittable && record.label == "Record a capture"
+        XCTAssertTrue(enabled, "Record must be enabled and hittable at zero waiting")
+        note("record-proof \(proof) waiting_zero=\(zeroInRow) record_enabled_hittable=\(enabled)")
+        shot(proof)
+        dump(app, proof)
+    }
+
     @MainActor private func step(_ name: String, _ body: () -> Void) {
         note("AUDIT begin \(name)")
         XCTContext.runActivity(named: name) { _ in body() }
@@ -747,7 +781,7 @@ final class KitUITests: XCTestCase {
         let ok = raw == "ok"
         note("REQUEST \(what) result=\(raw.isEmpty ? "absent" : raw) ok=\(ok)")
         switch what {
-        case "dark", "revokemic", "stopstub", "markpair", "markopenurl":
+        case "dark", "revokemic", "stopstub", "markpair", "markopenurl", "cacheonline", "cacheoffline", "restartstub":
             XCTAssertTrue(ok, "host request \(what) did not verify (\(raw.isEmpty ? "no result file" : raw)); the condition this stop depends on is unproven")
         default:
             break

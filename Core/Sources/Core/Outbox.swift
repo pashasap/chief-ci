@@ -164,7 +164,7 @@ public final class OutboxStore {
             return []
         }
         var found: [OutboxRecord] = []
-        for name in names where name.hasSuffix(".json") {
+        for name in names where name.hasSuffix(".json") && name != SnapshotCache.fileName {
             if let record = load(name) { found.append(record) }
         }
         return found.sorted { ($0.recordedAt, $0.clientId) < ($1.recordedAt, $1.clientId) }
