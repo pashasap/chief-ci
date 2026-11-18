@@ -4,9 +4,10 @@ import XCTest
 /// visible label the Core screen builders declare. Every PNG is written atomically to /tmp/kitshots before
 /// its shot line is logged, and the workflow mirrors each file into the upload directory as it appears.
 ///
-/// The suite is split into two stop groups that run as separate CI steps, XL/offline/landscape first:
-///   testXLOfflineLandscape - accessibility XL + XXXL, mic denied, offline, landscape
-///   testLightActions       - light-mode actions, sheets, Share, typed capture, dark mode
+/// The suite is split into three stop groups that run as separate CI steps, XL/XXXL layout first:
+///   testXLLayout      - accessibility XL (light/dark) + XXXL (Inbox, Today 4 segments, Record, Brief, Settings)
+///   testXLEnvironment - mic denied, offline, landscape
+///   testLightActions  - light-mode actions, sheets, Share, typed capture, dark mode
 /// Host-only work (appearance, deep link, stub stop, mic revoke, request-log pairing verdict) is requested as
 /// "KIT ... REQUEST <x>"; the workflow performs it, verifies the resulting condition and writes
 /// /tmp/kitctl/<x>-result ("ok" or "fail rc=..."), creating /tmp/kitctl/<x>-ok only when it verified. Pairing is
@@ -23,16 +24,15 @@ final class KitUITests: XCTestCase {
 
     override func setUpWithError() throws { continueAfterFailure = true }
 
-    /// Group 1 (runs first): XL, XXXL, mic denied, offline, landscape. The night's evidence, so it cannot be
-    /// the part that a later group's timeout loses.
+    /// Group 1 (runs first): XL and XXXL layout. The night's primary evidence, so it cannot time out behind environment stops.
     @MainActor
-    func testXLOfflineLandscape() throws {
+    func testXLLayout() throws {
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication()
 
-        step("01 launch unpaired (xl group)") {
+        step("01 launch unpaired (xl-layout group)") {
             app.launch()
-            let up = app.buttons["Record a capture"].waitForExistence(timeout: 90)
+            let up = recordControl(app).waitForExistence(timeout: 90)
             note("launched=\(up) state=\(app.state.rawValue)")
             sleep(2)
             shot("xl-01-unpaired-inbox")
@@ -46,7 +46,7 @@ final class KitUITests: XCTestCase {
             app.terminate()
             app.launchArguments = Self.largerText
             app.launch()
-            note("relaunched xl=\(app.buttons["Record a capture"].waitForExistence(timeout: 30))")
+            note("relaunched xl=\(recordControl(app).waitForExistence(timeout: 30))")
             tab(app, "Inbox"); _ = waitText(app, "building manager", timeout: 20); sleep(2)
             shot("50-xl-inbox")
             scaleProbe(app, "xl", "effective_scale_xl")
@@ -71,7 +71,7 @@ final class KitUITests: XCTestCase {
             app.terminate()
             app.launchArguments = Self.xxxlText
             app.launch()
-            note("relaunched xxxl=\(app.buttons["Record a capture"].waitForExistence(timeout: 30))")
+            note("relaunched xxxl=\(recordControl(app).waitForExistence(timeout: 30))")
             tab(app, "Inbox"); sleep(2)
             shot("50b-xxxl-inbox")
             scaleProbe(app, "xxxl", "effective_scale_xxxl")
@@ -100,7 +100,7 @@ final class KitUITests: XCTestCase {
             if segments.count > 0 { segments.element(boundBy: 0).tap(); sleep(1) }
             app.swipeUp(); sleep(1); shot("53b-xxxl-today-scrolled")
 
-            let record = app.buttons["Record a capture"].firstMatch
+            let record = recordControl(app)
             if record.exists {
                 let b = record.frame
                 note("record exists=true frame=\(Int(b.minX)),\(Int(b.minY)) \(Int(b.width))x\(Int(b.height)) hittable=\(record.isHittable)")
@@ -122,14 +122,35 @@ final class KitUITests: XCTestCase {
             tab(app, "Brief"); sleep(1); shot("55b-xxxl-brief")
             tab(app, "Settings"); sleep(1); shot("56b-xxxl-settings")
         }
+        note("DONE testXLLayout")
+    }
+
+    /// Group 2: mic denied, offline, landscape. It runs at the device's default text size - these stops prove
+    /// environment behaviour, not layout, and keeping them on the default size keeps the group inside its budget.
+    @MainActor
+    func testXLEnvironment() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        note("xl-environment group runs at the device's default text size")
+
+        step("01 launch unpaired (xl-environment group)") {
+            app.launch()
+            let up = recordControl(app).waitForExistence(timeout: 90)
+            note("launched=\(up) state=\(app.state.rawValue)")
+            sleep(2)
+            shot("env-01-unpaired-inbox")
+            dump(app, "env-unpaired-inbox")
+        }
+
+        pairAndConfirm(app, prefix: "env-")
 
         step("14 microphone denied") {
             app.terminate()
             request("revokemic")
             app.launchArguments = []
             app.launch()
-            note("relaunched=\(app.buttons["Record a capture"].waitForExistence(timeout: 30))")
-            let record = app.buttons["Record a capture"]
+            note("relaunched=\(recordControl(app).waitForExistence(timeout: 30))")
+            let record = recordControl(app)
             if record.exists {
                 record.tap(); sleep(3)
                 alerts("record-denied")
@@ -176,10 +197,10 @@ final class KitUITests: XCTestCase {
             tab(app, "Settings"); shot("83-landscape-settings")
             XCUIDevice.shared.orientation = .portrait
         }
-        note("DONE testXLOfflineLandscape")
+        note("DONE testXLEnvironment")
     }
 
-    /// Group 2: light-mode actions, sheets, Share, recording, dark mode.
+    /// Group 3: light-mode actions, sheets, Share, recording, dark mode.
     @MainActor
     func testLightActions() throws {
         XCUIDevice.shared.orientation = .portrait
@@ -187,7 +208,7 @@ final class KitUITests: XCTestCase {
 
         step("01 launch unpaired or paired") {
             app.launch()
-            let up = app.buttons["Record a capture"].waitForExistence(timeout: 90)
+            let up = recordControl(app).waitForExistence(timeout: 90)
             note("launched=\(up) state=\(app.state.rawValue)")
             sleep(2)
             shot("01-first-screen")
@@ -343,7 +364,7 @@ final class KitUITests: XCTestCase {
                 return
             }
             let draft = resultSheet.buttons["Open the draft"]
-            if scrollTo(resultSheet, draft, container: resultSheet) { draft.tap(); sleep(3) }
+            if scrollTo(app, draft, container: resultSheet) { draft.tap(); sleep(3) }
             resultSheet.swipeUp(); sleep(1)
             shot("25-result-sheet-draft")
 
@@ -391,10 +412,16 @@ final class KitUITests: XCTestCase {
 
         step("11 record: prompt, allow, type instead") {
             tab(app, "Inbox")
-            let record = app.buttons["Record a capture"]
+            let record = recordControl(app)
             guard record.exists else { note("record button not found"); shot("29b-record-missing"); return }
-            record.tap(); sleep(2)
+            if !record.isEnabled {
+                note("record disabled before the stop: label='\(record.label)'; waiting up to 20 s for the queue to drain")
+                let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: record)
+                _ = XCTWaiter.wait(for: [enabled], timeout: 20)
+            }
+            note("record pre-tap label='\(record.label)' enabled=\(record.isEnabled)")
             shot("30-record-prompt")
+            if record.isEnabled { record.tap(); sleep(2) } else { note("record still disabled: 31-33 describe the disabled state, not a prompt sheet") }
             alerts("record")
             let allow = springboard.alerts.buttons["Allow"].firstMatch
             if allow.waitForExistence(timeout: 4) { allow.tap(); sleep(2) }
@@ -466,7 +493,9 @@ final class KitUITests: XCTestCase {
                 field.typeText(Self.link)
                 shot("\(prefix)03-link-typed")
                 let pair = app.buttons["Pair with this link"]
-                note("pair button exists=\(pair.exists) hittable=\(pair.exists && pair.isHittable)")
+                dismissKeyboard(app)
+                _ = scrollTo(app, pair)
+                note("pair button exists=\(pair.exists) hittable=\(pair.exists && pair.isHittable) frame=\(pair.exists ? "\(pair.frame)" : "none")")
                 XCTAssertTrue(pair.exists && pair.isHittable, "Pair with this link is not hittable")
                 if pair.exists { pair.tap() }
             }
@@ -573,6 +602,14 @@ final class KitUITests: XCTestCase {
         })
     }
 
+    /// The Record control in either state. Core relabels it while the last capture is being sent
+    /// ("Record unavailable while the last capture is being sent"), so an exact-label query misses a control that is
+    /// on screen, which is how the light group lost `30-record-prompt` on 18 November.
+    @MainActor private func recordControl(_ app: XCUIApplication) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label == 'Record a capture' OR label BEGINSWITH 'Record unavailable'"))
+            .firstMatch
+    }
+
     // MARK: - Helpers
 
     @MainActor private func step(_ name: String, _ body: () -> Void) {
@@ -633,10 +670,16 @@ final class KitUITests: XCTestCase {
     /// and hittability instead of being averaged in with same-labelled buttons from the content area.
     @MainActor private func frames(_ app: XCUIApplication, _ labels: [String]) {
         for label in labels {
-            let els = app.buttons.matching(NSPredicate(format: "label == %@ OR label BEGINSWITH %@", label, label + ","))
-                .allElementsBoundByIndex
+            let els: [XCUIElement]
+            if label == "Record a capture" {
+                let r = recordControl(app)
+                els = r.exists ? [r] : []
+            } else {
+                els = app.buttons.matching(NSPredicate(format: "label == %@ OR label BEGINSWITH %@", label, label + ","))
+                    .allElementsBoundByIndex
+            }
             note("frames \(label): " + els.prefix(3).map {
-                "\(Int($0.frame.minX)),\(Int($0.frame.minY)) \(Int($0.frame.width))x\(Int($0.frame.height)) hittable=\($0.isHittable)"
+                "\(Int($0.frame.minX)),\(Int($0.frame.minY)) \(Int($0.frame.width))x\(Int($0.frame.height)) hittable=\($0.isHittable) enabled=\($0.isEnabled) label='\($0.label.prefix(60))'"
             }.joined(separator: " ; "))
             if Self.bottomBar.contains(label), let bar = els.max(by: { $0.frame.minY < $1.frame.minY }) {
                 note("bottom_bar \(label): \(Int(bar.frame.minX)),\(Int(bar.frame.minY)) \(Int(bar.frame.width))x\(Int(bar.frame.height)) hittable=\(bar.isHittable) min44=\(bar.frame.width >= 44 && bar.frame.height >= 44)")
@@ -667,7 +710,7 @@ final class KitUITests: XCTestCase {
     /// Record height to the group's baseline. A flag on its own is not evidence of the effective text size
     /// (episode 22); the measured heights are what the auditor compares with the pixels.
     @MainActor private func scaleProbe(_ app: XCUIApplication, _ tag: String, _ name: String?) {
-        let record = app.buttons["Record a capture"].firstMatch
+        let record = recordControl(app)
         let inbox = app.buttons.matching(NSPredicate(format: "label == 'Inbox' OR label BEGINSWITH 'Inbox,'"))
             .allElementsBoundByIndex.max(by: { $0.frame.minY < $1.frame.minY })
         let body = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "building manager")).firstMatch

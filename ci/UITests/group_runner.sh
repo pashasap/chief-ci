@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 # Host side of one stop group of the Kit simulator audit.
 #
-#   bash ci/UITests/group_runner.sh <xl|light>
+#   bash ci/UITests/group_runner.sh <xl-layout|xl-environment|light>
 #
 # One group = one CI step with its own timeout and its own artifact directory. The step's exit status is the
 # group's real status: it is never masked (F-327ab0). A group passes only when the test command exited 0, the log
 # carries the XCTest completion marker ("Executed N tests"), the exact method this group selected reported an
-# explicit pass, that method was not skipped, the log has no failure line, "** TEST SUCCEEDED **" is present, no
-# test writer survived the reap, every shot the test logged exists in the uploaded directory, every required named
-# stop is both logged and uploaded, and every host request verified its postcondition.
+# explicit pass, that method was not skipped, the log has no failure line, a success banner is present (either
+# "** TEST SUCCEEDED **" or the "** TEST EXECUTE SUCCEEDED **" that test-without-building emits), no test writer
+# survived the reap, every shot the test logged exists in the uploaded directory, every required named stop is both
+# logged and uploaded, and every host request verified its postcondition.
+#
+# The three groups exist because one traverse cannot reach XL, XXXL, offline and landscape inside a step timeout
+# (episode 27: the single XL group was cut off at 660 s with Today-XXXL and Record never executed). xl-layout runs
+# first, so the night's primary evidence can never be the part a later group's budget loses.
 #
 # Environment: SIM_UDID, RUNNER_TEMP (cert dir), GITHUB_WORKSPACE, GROUP_BUDGET_S, MIN_SHOTS, REQUIRE_SHOTS,
 # KIT_CTL_DIR, KIT_SHOTS_DIR.
@@ -18,19 +23,25 @@ set -uo pipefail
 
 GROUP=${1:-}
 case "$GROUP" in
-  xl)
-    TEST_NAME=testXLOfflineLandscape
-    BUDGET=${GROUP_BUDGET_S:-660}
-    MIN=${MIN_SHOTS:-40}
-    REQUIRED_SHOTS="50-xl-inbox,57-xl-dark-inbox,50b-xxxl-inbox,51b-xxxl-inbox-scrolled,52b-xxxl-today,52b-xxxl-today-seg-2,52b-xxxl-today-seg-3,52b-xxxl-today-seg-4,53b-xxxl-today-scrolled,54b-xxxl-record,54-xl-brief,55-xl-settings,70-offline-inbox,71-offline-approve-tapped,75-offline-settings,80-landscape-inbox,81-landscape-today,82-landscape-brief,83-landscape-settings"
+  xl-layout)
+    TEST_NAME=testXLLayout
+    BUDGET=${GROUP_BUDGET_S:-840}
+    MIN=${MIN_SHOTS:-14}
+    REQUIRED_SHOTS="50-xl-inbox,57-xl-dark-inbox,50b-xxxl-inbox,51b-xxxl-inbox-scrolled,52b-xxxl-today,52b-xxxl-today-seg-2,52b-xxxl-today-seg-3,52b-xxxl-today-seg-4,53b-xxxl-today-scrolled,54b-xxxl-record,54-xl-brief,55-xl-settings,55b-xxxl-brief,56b-xxxl-settings"
+    ;;
+  xl-environment)
+    TEST_NAME=testXLEnvironment
+    BUDGET=${GROUP_BUDGET_S:-540}
+    MIN=${MIN_SHOTS:-10}
+    REQUIRED_SHOTS="env-01-unpaired-inbox,60-record-mic-denied,70-offline-inbox,71-offline-approve-tapped,75-offline-settings,80-landscape-inbox,81-landscape-today,82-landscape-brief,83-landscape-settings"
     ;;
   light)
     TEST_NAME=testLightActions
-    BUDGET=${GROUP_BUDGET_S:-780}
-    MIN=${MIN_SHOTS:-40}
+    BUDGET=${GROUP_BUDGET_S:-660}
+    MIN=${MIN_SHOTS:-36}
     REQUIRED_SHOTS="05-inbox-top,07-capture-sheet,08-item-detail,15-today-1,22-brief,24-result-sheet,26-share-sheet,27-settings,30-record-prompt,40-dark-inbox,46-dark-settings"
     ;;
-  *) echo "usage: group_runner.sh <xl|light>" >&2; exit 64 ;;
+  *) echo "usage: group_runner.sh <xl-layout|xl-environment|light>" >&2; exit 64 ;;
 esac
 
 DRY=${GROUP_DRY:-0}
@@ -126,7 +137,7 @@ pairing () {
     checkpersisted) since=$BASE; allow="--allow-earlier-snapshot" ;;
     *) since=$BASE ;;
   esac
-  python3 ci/UITests/pairing_status.py --log "$REQLOG" --since "$since" --wait 30 $allow \
+  python3 ci/UITests/pairing_status.py --log "$REQLOG" --since "$since" --wait 120 $allow \
     --out "$CTL/$req-status" >> "$A/pairing.txt" 2>&1
   local verdict; verdict=$(cat "$CTL/$req-status" 2>/dev/null)
   {
@@ -259,8 +270,21 @@ fi
 # ---- result propagation -------------------------------------------------------------------------------
 EXECUTED=$(grep -oE "Executed [0-9]+ tests?" "$LOG" | tail -1 | grep -oE "[0-9]+")
 EXECUTED=${EXECUTED:-0}
-SUCCEEDED=0; grep -qE "\*\* TEST SUCCEEDED \*\*" "$LOG" && SUCCEEDED=1
-FAIL_LINES=$(grep -E "Test Case .* failed|\*\* TEST FAILED \*\*| error: " "$LOG" | head -20)
+# Either banner proves the run reached its end: `xcodebuild test` writes "** TEST SUCCEEDED **" and
+# `test-without-building` writes "** TEST EXECUTE SUCCEEDED **". Requiring only the first made a green test with
+# `xcresult result: Passed` report FAIL on 18 November (episode 27), so both are accepted and the archived
+# xcresult verdict, when present, is preferred over any string in the log.
+SUCCEEDED=0
+grep -qE '\*\* TEST (EXECUTE )?SUCCEEDED \*\*' "$LOG" && SUCCEEDED=1
+XCR_RESULT=""
+if [ -f "$A/xcresult-summary.txt" ]; then
+  XCR_RESULT=$(python3 -c 'import json,sys,re
+raw=open(sys.argv[1],encoding="utf-8",errors="replace").read()
+m=re.search(r"\"result\"\s*:\s*\"(\w+)\"",raw)
+print(m.group(1) if m else "")' "$A/xcresult-summary.txt" 2>/dev/null)
+fi
+[ "$XCR_RESULT" = "Passed" ] && SUCCEEDED=1
+FAIL_LINES=$(grep -E "Test Case .* failed|\*\* TEST (EXECUTE )?FAILED \*\*| error: " "$LOG" | head -20)
 
 # The method this group selected must report its own outcome: an aggregate green, or another method's pass, is not
 # evidence that this stop ran (episode 20). A skipped or absent method is UNSEEN, never a pass. The log spells the
@@ -270,14 +294,14 @@ OBSERVED=absent
 grep -qF "Test Case '-[$EXPECT_CASE]' passed" "$LOG" && OBSERVED=passed
 grep -qF "Test Case '-[$EXPECT_CASE]' failed" "$LOG" && OBSERVED=failed
 grep -qE "Test Case '-\[$EXPECT_CASE\]'.*(skipped)" "$LOG" && OBSERVED=skipped
-echo "expected=$EXPECT_CASE observed=$OBSERVED executed=${EXECUTED} testSucceededLine=${SUCCEEDED} failureLines=$(printf '%s' "$FAIL_LINES" | grep -c . )"
+echo "expected=$EXPECT_CASE observed=$OBSERVED executed=${EXECUTED} successBanner=$SUCCEEDED xcresult=${XCR_RESULT:-absent} failureLines=$(printf '%s' "$FAIL_LINES" | grep -c . )"
 
 STATUS=PASS
 REASONS=()
 if [ "$CUTOFF" = "1" ]; then STATUS=FAIL; REASONS+=("group cutoff at ${BUDGET}s: the traverse did not finish"); fi
 if [ "$RC" -ne 0 ]; then STATUS=FAIL; REASONS+=("test command exited rc=$RC"); fi
 if [ "$EXECUTED" -lt 1 ]; then STATUS=FAIL; REASONS+=("no XCTest completion marker 'Executed N tests' in test.log"); fi
-if [ "$SUCCEEDED" = "0" ]; then STATUS=FAIL; REASONS+=("no '** TEST SUCCEEDED **' line in test.log"); fi
+if [ "$SUCCEEDED" = "0" ]; then STATUS=FAIL; REASONS+=("no success banner ('** TEST SUCCEEDED **' or '** TEST EXECUTE SUCCEEDED **') and no passed xcresult in test.log"); fi
 if [ -n "$FAIL_LINES" ]; then STATUS=FAIL; REASONS+=("failure lines in test.log (first: $(printf '%s' "$FAIL_LINES" | head -1 | cut -c1-160))"); fi
 if [ "$WRITERS" != "0" ]; then STATUS=FAIL; REASONS+=("$WRITERS test writer(s) survived the reap"); fi
 if [ "$OBSERVED" != "passed" ]; then
@@ -308,9 +332,9 @@ echo "host requests:${REQ_LINES:- none}"
 [ -f "$A/pairing.txt" ] && sed 's/^/pairing-log /' "$A/pairing.txt"
 
 echo "---- group $GROUP summary"
-echo "GROUP_RESULT group=$GROUP test=$TEST_NAME expected=$EXPECT_CASE observed=$OBSERVED status=$STATUS executed=$EXECUTED rc=$RC cutoff=$CUTOFF writers=$WRITERS shots_logged=$(grep -cE '^KIT [0-9.]+ shot ' "$LOG") shots_uploaded=$(ls "$A/shots" 2>/dev/null | wc -l | tr -d ' ') named_required=$([ -n "$RS" ] && echo yes || echo no) xcresult=$XCR_STATE elapsed=$(( $(date +%s) - T0 ))s"
+echo "GROUP_RESULT group=$GROUP test=$TEST_NAME expected=$EXPECT_CASE observed=$OBSERVED status=$STATUS executed=$EXECUTED rc=$RC cutoff=$CUTOFF writers=$WRITERS shots_logged=$(grep -cE '^KIT [0-9.]+ shot ' "$LOG") shots_uploaded=$(ls "$A/shots" 2>/dev/null | wc -l | tr -d ' ') named_required=$([ -n "$RS" ] && echo yes || echo no) xcresult=$XCR_STATE xcresult_result=${XCR_RESULT:-absent} elapsed=$(( $(date +%s) - T0 ))s"
 for r in ${REASONS[@]+"${REASONS[@]}"}; do echo "GROUP_REASON $r"; done
-{ echo "GROUP_RESULT group=$GROUP test=$TEST_NAME expected=$EXPECT_CASE observed=$OBSERVED status=$STATUS executed=$EXECUTED rc=$RC cutoff=$CUTOFF writers=$WRITERS shots_uploaded=$(ls "$A/shots" 2>/dev/null | wc -l | tr -d ' ') named_required=$([ -n "$RS" ] && echo yes || echo no) xcresult=$XCR_STATE"
+{ echo "GROUP_RESULT group=$GROUP test=$TEST_NAME expected=$EXPECT_CASE observed=$OBSERVED status=$STATUS executed=$EXECUTED rc=$RC cutoff=$CUTOFF writers=$WRITERS shots_uploaded=$(ls "$A/shots" 2>/dev/null | wc -l | tr -d ' ') named_required=$([ -n "$RS" ] && echo yes || echo no) xcresult=$XCR_STATE xcresult_result=${XCR_RESULT:-absent}"
   for r in ${REASONS[@]+"${REASONS[@]}"}; do echo "GROUP_REASON $r"; done
   [ -f "$A/pairing.txt" ] && cat "$A/pairing.txt"; } > "$A/summary.txt"
 grep "KIT " "$LOG" | grep -v " shot " | cut -c1-300 | tail -60

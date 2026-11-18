@@ -87,30 +87,37 @@ mklog () {
   {
     printf '%s\n' "KIT 1.0 AUDIT begin 01 x" "KIT 1.1 shot dry-01" "KIT 1.2 shot dry-02"
     case "$mode" in
-      xl-pass)
-        printf '%s\n' "Test Case '-[KitUITests.KitUITests testXLOfflineLandscape]' passed (1.0 seconds)." \
+      xl-layout-pass)
+        printf '%s\n' "Test Case '-[KitUITests.KitUITests testXLLayout]' passed (1.0 seconds)." \
           "Test Suite 'KitUITests' passed at 2026-11-18 00:00:00.000." \
           "Executed 1 test, with 0 failures (0 unexpected) in 1.0 (1.0) seconds" \
           "** TEST SUCCEEDED **" ;;
+      xl-execute-banner)
+        # `xcodebuild test-without-building` ends with this banner instead. Run 44218947277's light group was green
+        # in its xcresult and still reported FAIL because only the other spelling was accepted (episode 27).
+        printf '%s\n' "Test Case '-[KitUITests.KitUITests testXLLayout]' passed (1.0 seconds)." \
+          "Test Suite 'KitUITests' passed at 2026-11-18 00:00:00.000." \
+          "Executed 1 test, with 0 failures (0 unexpected) in 1.0 (1.0) seconds" \
+          "** TEST EXECUTE SUCCEEDED **" ;;
       light-pass)
         printf '%s\n' "Test Case '-[KitUITests.KitUITests testLightActions]' passed (1.0 seconds)." \
           "Test Suite 'KitUITests' passed at 2026-11-18 00:00:00.000." \
           "Executed 1 test, with 0 failures (0 unexpected) in 1.0 (1.0) seconds" \
           "** TEST SUCCEEDED **" ;;
-      xl-skipped)
-        printf '%s\n' "Test Case '-[KitUITests.KitUITests testXLOfflineLandscape]' skipped (0.5 seconds)." \
+      xl-layout-skipped)
+        printf '%s\n' "Test Case '-[KitUITests.KitUITests testXLLayout]' skipped (0.5 seconds)." \
           "Executed 1 test, with 0 failures (0 unexpected) in 0.5 (0.5) seconds" \
           "** TEST SUCCEEDED **" ;;
       aggregate)
         printf '%s\n' "Test Suite 'KitUITests' passed at 2026-11-18 00:00:00.000." \
           "Executed 1 test, with 0 failures (0 unexpected) in 1.0 (1.0) seconds" \
           "** TEST SUCCEEDED **" ;;
-      xl-failed)
-        printf '%s\n' "Test Case '-[KitUITests.KitUITests testXLOfflineLandscape]' failed (1.0 seconds)." \
+      xl-layout-failed)
+        printf '%s\n' "Test Case '-[KitUITests.KitUITests testXLLayout]' failed (1.0 seconds)." \
           "Executed 1 test, with 1 failure (0 unexpected) in 1.0 (1.0) seconds" \
           "** TEST FAILED **" ;;
       zero-executed)
-        printf '%s\n' "Test Case '-[KitUITests.KitUITests testXLOfflineLandscape]' passed (1.0 seconds)." \
+        printf '%s\n' "Test Case '-[KitUITests.KitUITests testXLLayout]' passed (1.0 seconds)." \
           "Executed 0 tests, with 0 failures (0 unexpected) in 0.0 (0.0) seconds" \
           "** TEST SUCCEEDED **" ;;
       *) no "mklog: unknown mode $mode" ;;
@@ -134,9 +141,10 @@ fingerprint () {
 echo "== dry-run isolation and the propagation replay (episode 20)"
 BEFORE=$(fingerprint)
 iso=""
-for spec in "xl-pass:xl:xl-pass:0" "light-pass:light:light-pass:0" "xl-wrong-method:xl:light-pass:1" \
-            "xl-skipped:xl:xl-skipped:1" "xl-aggregate:xl:aggregate:1" "xl-failed:xl:xl-failed:1" \
-            "xl-zero-executed:xl:zero-executed:1"; do
+for spec in "xl-layout-pass:xl-layout:xl-layout-pass:0" "xl-execute-banner:xl-layout:xl-execute-banner:0" \
+            "light-pass:light:light-pass:0" "xl-layout-wrong-method:xl-layout:light-pass:1" \
+            "xl-layout-skipped:xl-layout:xl-layout-skipped:1" "xl-layout-aggregate:xl-layout:aggregate:1" \
+            "xl-layout-failed:xl-layout:xl-layout-failed:1" "xl-layout-zero-executed:xl-layout:zero-executed:1"; do
   IFS=: read -r label grp mode want <<< "$spec"
   d="$TMP/ep20-$label"
   mkdir -p "$d/shots"
@@ -150,25 +158,25 @@ for spec in "xl-pass:xl:xl-pass:0" "light-pass:light:light-pass:0" "xl-wrong-met
 done
 
 # Named stops: the same dry run, once with both names present and once with one never captured.
-d="$TMP/ep20-named-present"; mkdir -p "$d/shots"; mklog "$d.seed" xl-pass
+d="$TMP/ep20-named-present"; mkdir -p "$d/shots"; mklog "$d.seed" xl-layout-pass
 : > "$d/shots/dry-01.png"; : > "$d/shots/dry-02.png"
 RC=0
 GROUP_DRY=1 GROUP_DRY_LOG="$d.seed" GROUP_DRY_DIR="$d" MIN_SHOTS=2 REQUIRE_SHOTS="dry-01,dry-02" \
-  bash ci/UITests/group_runner.sh xl > "$d.out" 2>&1 || RC=$?
+  bash ci/UITests/group_runner.sh xl-layout > "$d.out" 2>&1 || RC=$?
 [ "$RC" -eq 0 ] && ok "ep14 named stops present rc=0" || no "ep14 named stops present rc=$RC want=0: $(grep -m1 GROUP_REASON "$d.out")"
 
-d="$TMP/ep20-named-missing"; mkdir -p "$d/shots"; mklog "$d.seed" xl-pass
+d="$TMP/ep20-named-missing"; mkdir -p "$d/shots"; mklog "$d.seed" xl-layout-pass
 : > "$d/shots/dry-01.png"; : > "$d/shots/dry-02.png"
 RC=0
 GROUP_DRY=1 GROUP_DRY_LOG="$d.seed" GROUP_DRY_DIR="$d" MIN_SHOTS=2 REQUIRE_SHOTS="dry-01,zz-never-shot" \
-  bash ci/UITests/group_runner.sh xl > "$d.out" 2>&1 || RC=$?
+  bash ci/UITests/group_runner.sh xl-layout > "$d.out" 2>&1 || RC=$?
 [ "$RC" -ne 0 ] && ok "ep14 required stop never captured rc=$RC" || no "ep14 required stop never captured rc=0 want!=0"
 grep -q 'zz-never-shot' "$d/inventory.txt" 2>/dev/null \
   && ok "ep14 inventory names the missing stop" || no "ep14 inventory does not name the missing stop"
 
-d="$TMP/ep20-lost-shot"; mkdir -p "$d/shots"; mklog "$d.seed" xl-pass
+d="$TMP/ep20-lost-shot"; mkdir -p "$d/shots"; mklog "$d.seed" xl-layout-pass
 : > "$d/shots/dry-01.png"
-drygroup "$d" "$d.seed" xl
+drygroup "$d" "$d.seed" xl-layout
 [ "$RC" -ne 0 ] && ok "ep20 logged shot missing from disk rc=$RC" || no "ep20 logged shot missing from disk rc=0 want!=0"
 
 # Isolation: the dry runs used private paths and the shared ones were not touched.
@@ -179,7 +187,7 @@ grep -q "^paths .*shots=$TMP/" "$iso.out" 2>/dev/null \
 [ -d "$iso/kitctl" ] && ok "dry run wrote its request markers into its own kitctl" || no "dry run wrote no private kitctl"
 RC=0
 GROUP_DRY=1 GROUP_DRY_LOG="$iso.seed" GROUP_DRY_DIR="$TMP/ep20-refuse" KIT_CTL_DIR=/tmp/kitctl \
-  bash ci/UITests/group_runner.sh xl > "$TMP/refuse.out" 2>&1 || RC=$?
+  bash ci/UITests/group_runner.sh xl-layout > "$TMP/refuse.out" 2>&1 || RC=$?
 [ "$RC" -eq 65 ] && ok "dry run refuses the shared /tmp/kitctl" || no "dry run did not refuse the shared /tmp/kitctl (rc=$RC)"
 AFTER=$(fingerprint)
 if [ "$BEFORE" = "$AFTER" ]; then
@@ -266,34 +274,37 @@ FAKE_UI_RC=0 hostreq markopenurl markopenurl ok
   || no "ep16 markopenurl wrote no checkpoint"
 
 echo "== required-group verdict (episode 15)"
-vcase () { # <label> <mode> <xl outcome> <light outcome> <want rc>
-  local label=$1 mode=$2 xl=$3 li=$4 want=$5 d="$TMP/v-$1"
-  mkdir -p "$d/xl" "$d/light"
-  for g in xl light; do
+vcase () { # <label> <mode> <xl-layout outcome> <xl-environment outcome> <light outcome> <want rc>
+  local label=$1 mode=$2 xl=$3 en=$4 li=$5 want=$6 d="$TMP/v-$1"
+  mkdir -p "$d/xl-layout" "$d/xl-environment" "$d/light"
+  for g in xl-layout xl-environment light; do
     printf 'GROUP_RESULT group=%s status=PASS executed=1\n' "$g" > "$d/$g/summary.txt"
     printf 'shots logged=30 uploaded=30 unique_logged=30 missing=0 extra=0 required=30 named_required=19\nresult: ok\n' > "$d/$g/inventory.txt"
   done
   local rc=0
-  bash ci/UITests/verdict.sh "$mode" "$xl" "$li" "$d" > "$d.out" 2>&1 || rc=$?
+  bash ci/UITests/verdict.sh "$mode" "$xl" "$en" "$li" "$d" > "$d.out" 2>&1 || rc=$?
   if [ "$rc" -eq "$want" ]; then ok "ep15 $label rc=$rc"; else
     no "ep15 $label rc=$rc want=$want: $(grep -m1 GROUP_FAILED "$d.out")"
   fi
 }
-vcase all-both-success all success success 0
-vcase all-light-failed all success failure 1
-vcase all-both-skipped all skipped skipped 1
-vcase all-light-skipped all success skipped 1
-vcase all-xl-skipped all skipped success 1
-vcase xl-only xl success skipped 0
-vcase light-only light skipped success 0
+vcase all-both-success all success success success 0
+vcase all-light-failed all success success failure 1
+vcase all-environment-skipped all success skipped success 1
+vcase all-layout-skipped all skipped success success 1
+vcase all-both-skipped all skipped skipped skipped 1
+vcase xl-layout-only xl-layout success skipped skipped 0
+vcase xl-environment-only xl-environment skipped success skipped 0
+vcase light-only light skipped skipped success 0
 
 # A group whose evidence did not land cannot be green even with a success outcome.
-d="$TMP/v-missing-inventory"; mkdir -p "$d/xl" "$d/light"
-printf 'GROUP_RESULT group=xl status=PASS\n' > "$d/xl/summary.txt"
+d="$TMP/v-missing-inventory"; mkdir -p "$d/xl-layout" "$d/xl-environment" "$d/light"
+printf 'GROUP_RESULT group=xl-layout status=PASS\n' > "$d/xl-layout/summary.txt"
+printf 'GROUP_RESULT group=xl-environment status=PASS\n' > "$d/xl-environment/summary.txt"
 printf 'GROUP_RESULT group=light status=PASS\n' > "$d/light/summary.txt"
 printf 'result: ok\n' > "$d/light/inventory.txt"
+printf 'result: ok\n' > "$d/xl-environment/inventory.txt"
 rc=0
-bash ci/UITests/verdict.sh all success success "$d" > "$d.out" 2>&1 || rc=$?
+bash ci/UITests/verdict.sh all success success success "$d" > "$d.out" 2>&1 || rc=$?
 [ "$rc" -eq 1 ] && ok "ep15 missing inventory is red (rc=1)" || no "ep15 missing inventory rc=$rc want=1"
 
 echo "== local check outputs: $TMP"

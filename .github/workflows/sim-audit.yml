@@ -2,9 +2,14 @@ name: Kit bounded simulator audit
 
 # Public CI-only repository: standard GitHub-hosted runner only (never a -large/-xlarge label, which is billed).
 #
-# Two stop groups, each its own step with its own timeout and its own artifact upload, XL/offline/landscape first
-# so the night's evidence cannot be the part a later timeout loses (F-61f096). Each group step reports its real
-# status and the job is only green when every executed group passed (F-327ab0).
+# Three stop groups, each its own step with its own timeout and its own artifact upload: xl-layout (Accessibility XL
+# and XXXL screens, the night's primary evidence, so it runs first and cannot be lost to a later group), then
+# xl-environment (mic denied, offline, landscape), then light/actions. Each group step reports its real status and the
+# job is only green when every required group passed (F-327ab0, F-61f096).
+#
+# The split is three-way because one traverse cannot reach XL, XXXL, offline and landscape inside a step timeout: on
+# 18 November the two-way split's XL group was cut off at its own 660 s budget with Today-XXXL and the Record target
+# still unexecuted, which is exactly the evidence the audit needed.
 on:
   push:
     # Registration only: a workflow that exists only on a side branch is not listed for workflow_dispatch until it
@@ -21,7 +26,7 @@ on:
       group:
         description: Stop group
         type: choice
-        options: [all, xl, light]
+        options: [all, xl-layout, xl-environment, light]
         default: all
 
 concurrency:
@@ -32,9 +37,9 @@ permissions:
   contents: read
 
 env:
-  # Sum of the step timeouts below (4+9+4+12+15+2 min = 2760s) fits this cap, which fits the 50-minute job cap:
-  # even if every step is cut at its own limit, the job still ends with its verdict step run.
-  JOB_CAP_S: "2820"
+  # Group budgets (840+540+660 = 2040 s) plus setup, build, boot and verdict (~330 s) stay under this cap, which
+  # bounds the job even if a step's own timeout is never reached.
+  JOB_CAP_S: "3480"
   AUDIT_DEVICE: ${{ inputs.device || 'phone' }}
   AUDIT_GROUP: ${{ inputs.group || 'all' }}
 
@@ -52,9 +57,9 @@ jobs:
     # Standard (non-xlarge) label of the runner-images "Xcode 27" arm64 image (public preview), which ships
     # Xcode 27.0/27.1/27.2 and the iOS 27.0/27.1/27.2 simulator runtimes.
     runs-on: xcode-27
-    # Step timeouts (4+9+4+12+15+2 = 46 min) fit inside this 50-minute cap, and the group budgets (660s + 780s)
-    # fit inside JOB_CAP_S once the setup, build and boot limits are subtracted.
-    timeout-minutes: 50
+    # Step timeouts sum to 56 min (4+9+4+16+10+11+2); the measured job on 18 November used 1432 s of 3000 s with only
+    # two groups, so this cap costs nothing in practice and leaves the three bounded groups room to finish.
+    timeout-minutes: 58
     steps:
       - uses: actions/checkout@v4
 
@@ -174,23 +179,23 @@ jobs:
           echo "ready at $(( $(date +%s) - JOB_T0 ))s"
           true
 
-      # ---- group 1: XL, offline, landscape (first, so its evidence survives any later failure) ----------------
-      - name: Group XL/offline/landscape (own timeout, own artifacts)
-        id: xl
-        if: ${{ github.event_name == 'workflow_dispatch' && (env.AUDIT_GROUP == 'all' || env.AUDIT_GROUP == 'xl') }}
-        timeout-minutes: 12
+      # ---- group 1: XL and XXXL layout (first, so the night's primary evidence cannot be lost) ---------------
+      - name: Group XL/XXXL layout (own timeout, own artifacts)
+        id: xl_layout
+        if: ${{ github.event_name == 'workflow_dispatch' && (env.AUDIT_GROUP == 'all' || env.AUDIT_GROUP == 'xl-layout') }}
+        timeout-minutes: 16
         continue-on-error: true
         env:
-          GROUP_BUDGET_S: "660"
-          # Floor, not a target: the group logs ~39 shots when the app behaves and its fallback paths are not taken.
-          MIN_SHOTS: "30"
-        run: bash ci/UITests/group_runner.sh xl
+          GROUP_BUDGET_S: "840"
+          # Floor, not a target: ~20 shots when the app behaves; the named-stop list carries the real proof.
+          MIN_SHOTS: "14"
+        run: bash ci/UITests/group_runner.sh xl-layout
 
-      - name: Upload XL/offline/landscape artifacts
-        if: ${{ always() && steps.xl.outcome != 'skipped' }}
+      - name: Upload XL/XXXL layout artifacts
+        if: ${{ always() && steps.xl_layout.outcome != 'skipped' }}
         uses: actions/upload-artifact@v4
         with:
-          name: kit-sim-xl
+          name: kit-sim-xl-layout
           retention-days: 3
           if-no-files-found: error
           path: |
@@ -199,16 +204,40 @@ jobs:
             ci/artifacts/build.log
             ci/artifacts/source-manifest.txt
             ci/artifacts/requests.jsonl
-            ci/artifacts/xl/**
+            ci/artifacts/xl-layout/**
 
-      # ---- group 2: light-mode actions, sheets, Share, dark ------------------------------------------------
+      # ---- group 2: environment (mic denied, offline, landscape) ----------------------------------------------
+      - name: Group environment/mic-denied/offline/landscape (own timeout, own artifacts)
+        id: xl_env
+        if: ${{ github.event_name == 'workflow_dispatch' && (env.AUDIT_GROUP == 'all' || env.AUDIT_GROUP == 'xl-environment') }}
+        timeout-minutes: 10
+        continue-on-error: true
+        env:
+          GROUP_BUDGET_S: "540"
+          MIN_SHOTS: "10"
+        run: bash ci/UITests/group_runner.sh xl-environment
+
+      - name: Upload environment artifacts
+        if: ${{ always() && steps.xl_env.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: kit-sim-xl-environment
+          retention-days: 3
+          if-no-files-found: error
+          path: |
+            ci/artifacts/device.txt
+            ci/artifacts/source-manifest.txt
+            ci/artifacts/requests.jsonl
+            ci/artifacts/xl-environment/**
+
+      # ---- group 3: light-mode actions, sheets, Share, dark ------------------------------------------------
       - name: Group light/actions (own timeout, own artifacts)
         id: light
         if: ${{ github.event_name == 'workflow_dispatch' && (env.AUDIT_GROUP == 'all' || env.AUDIT_GROUP == 'light') }}
-        timeout-minutes: 15
+        timeout-minutes: 11
         continue-on-error: true
         env:
-          GROUP_BUDGET_S: "780"
+          GROUP_BUDGET_S: "660"
           # Floor, not a target: ~45 shots when the app behaves; about six of the named shots are fallback branches.
           MIN_SHOTS: "36"
         run: bash ci/UITests/group_runner.sh light
@@ -233,12 +262,14 @@ jobs:
         run: |
           set +e
           A=ci/artifacts
-          XL="${{ steps.xl.outcome }}"; LI="${{ steps.light.outcome }}"
-          echo "group outcomes: xl=$XL light=$LI requested=$AUDIT_GROUP"
+          XL="${{ steps.xl_layout.outcome }}"
+          EN="${{ steps.xl_env.outcome }}"
+          LI="${{ steps.light.outcome }}"
+          echo "group outcomes: xl-layout=${XL:-<blank>} xl-environment=${EN:-<blank>} light=${LI:-<blank>} requested=$AUDIT_GROUP"
           FAIL=0
-          # Required groups follow the request (all -> xl and light). The gate replays this exact script offline.
-          bash ci/UITests/verdict.sh "$AUDIT_GROUP" "$XL" "$LI" "$A" || FAIL=1
-          for g in xl light; do
+          # Required groups follow the request (all -> the three groups). The gate replays this exact script offline.
+          bash ci/UITests/verdict.sh "$AUDIT_GROUP" "$XL" "$EN" "$LI" "$A" || FAIL=1
+          for g in xl-layout xl-environment light; do
             [ -f "$A/$g/pairing.txt" ] && { echo "--- $A/$g/pairing.txt"; cat "$A/$g/pairing.txt"; }
             [ -f "$A/$g/xcresult-summary.txt" ] && { echo "--- $A/$g/xcresult-summary.txt"; head -40 "$A/$g/xcresult-summary.txt"; }
           done

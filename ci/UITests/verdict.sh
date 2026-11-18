@@ -1,38 +1,54 @@
 #!/usr/bin/env bash
 # Decides the job's colour from the requested stop group and the observed step outcomes.
 #
-#   bash ci/UITests/verdict.sh <all|xl|light> <xl outcome> <light outcome> <artifacts dir>
+#   bash ci/UITests/verdict.sh <all|xl-layout|xl-environment|light> \
+#        <xl-layout outcome> <xl-environment outcome> <light outcome> <artifacts dir>
 #
-# The required groups follow the request: all -> xl and light, xl -> xl, light -> light. A required group passes only
-# when its step outcome is exactly "success" AND the evidence it must archive is present: summary.txt with a
-# status=PASS line, inventory.txt with a "result: ok" line. A skipped, blank or failed outcome fails, so a mode can
-# never be satisfied by a group that never ran, and a group that lost its evidence cannot look green.
+# The required groups follow the request: all -> xl-layout, xl-environment and light; a single group -> only that
+# group. A required group passes only when its step outcome is exactly "success" AND the evidence it must archive is
+# present: summary.txt with a status=PASS line, inventory.txt with a "result: ok" line. A skipped, blank or failed
+# outcome fails, so a mode can never be satisfied by a group that never ran, and a group that lost its evidence
+# cannot look green.
 #
 # Exit 0 when every required group passed, 1 otherwise.
+# NB: the group list lives in ALL_GROUPS because bash reserves GROUPS for the caller's group ids and ignores
+# an assignment to it, which made every required group resolve to the numeric gid.
 set -uo pipefail
 
 MODE=${1:-}
-XL=${2:-}
-LI=${3:-}
-A=${4:-ci/artifacts}
+XL_LAYOUT=${2:-}
+XL_ENV=${3:-}
+LI=${4:-}
+A=${5:-ci/artifacts}
+ALL_GROUPS="xl-layout xl-environment light"
 FAIL=0
 
 case "$MODE" in
-  all)   REQUIRED="xl light" ;;
-  xl)    REQUIRED="xl" ;;
-  light) REQUIRED="light" ;;
-  *)     echo "VERDICT unknown audit group '${MODE}'"; REQUIRED="xl light"; FAIL=1 ;;
+  all)          REQUIRED=$ALL_GROUPS ;;
+  xl-layout)    REQUIRED="xl-layout" ;;
+  xl-environment) REQUIRED="xl-environment" ;;
+  light)        REQUIRED="light" ;;
+  *)            echo "VERDICT unknown audit group '${MODE}'"; REQUIRED=$ALL_GROUPS; FAIL=1 ;;
 esac
-echo "verdict: group=$MODE required=$REQUIRED xl=${XL:-<blank>} light=${LI:-<blank>}"
+echo "verdict: group=$MODE required=$REQUIRED xl-layout=${XL_LAYOUT:-<blank>} xl-environment=${XL_ENV:-<blank>} light=${LI:-<blank>}"
 
-for g in xl light; do
-  case " $REQUIRED " in *" $g "*) continue ;; esac
-  case "$g" in xl) O=$XL ;; light) O=$LI ;; esac
-  echo "GROUP_NOT_REQUIRED $g outcome=${O:-<blank>}"
+outcome () {
+  case "$1" in
+    xl-layout) printf '%s' "$XL_LAYOUT" ;;
+    xl-environment) printf '%s' "$XL_ENV" ;;
+    light) printf '%s' "$LI" ;;
+  esac
+}
+
+for g in $ALL_GROUPS; do
+  case " $REQUIRED " in
+    *" $g "*) continue ;;
+    *) echo "GROUP_NOT_REQUIRED $g outcome=$(outcome "$g" || true)" ;;
+  esac
 done
 
 for g in $REQUIRED; do
-  case "$g" in xl) O=$XL ;; light) O=$LI ;; esac
+  O=$(outcome "$g")
   echo "GROUP_REQUIRED $g outcome=${O:-<blank>}"
   if [ "$O" != "success" ]; then
     echo "GROUP_FAILED $g outcome=${O:-<blank>} (required by group=$MODE)"
