@@ -94,16 +94,21 @@ if kill -0 $pid 2>/dev/null; then
   for _ in $(seq 1 $FINALIZE_S); do kill -0 $pid 2>/dev/null || break; sleep 1; done
   kill -9 $pid 2>/dev/null
 fi
-if [ "${AUDIT_FUZZ:-0}" = "1" ] && [ -f "ci/UITests/AuditFuzzUITests.swift" ]; then
-  if [ $done_at -gt 0 ] && [ $(( $(date +%s) - JOB_T0 )) -lt $((CUTOFF - 120)) ]; then
+if [ "${AUDIT_FUZZ:-0}" = "1" ] && [ -f "ci/UITests/AuditFuzzUITests.swift" ] && { [ -z "${SHARD_INDEX:-}" ] || [ "${SHARD_INDEX:-1}" = "1" ]; }; then
+  FUZZ_BUDGET=$((EXTENDED - 90))
+  FUZZ_ELAPSED=$(( $(date +%s) - JOB_T0 ))
+  if [ $done_at -gt 0 ] && [ $FUZZ_ELAPSED -lt $FUZZ_BUDGET ]; then
     FUZZ_RESULT=$A/fuzz-result.xcresult
     rm -rf $FUZZ_RESULT
+    echo "TIMING fuzz start at ${FUZZ_ELAPSED}s"
     NSUnbufferedIO=YES xcodebuild test-without-building -xctestrun "$XTR" \
       -destination "platform=iOS Simulator,id=$SIM_UDID" \
       -test-timeouts-enabled YES -default-test-execution-time-allowance 60 -maximum-test-execution-time-allowance 60 \
       -parallel-testing-enabled NO -resultBundlePath $FUZZ_RESULT \
       -only-testing:AuditStopsUITests/AuditFuzzUITests > $A/fuzz-test.log 2>&1 || true
     echo "TIMING fuzz done at $(( $(date +%s) - JOB_T0 ))s"
+  else
+    echo "TIMING fuzz skipped (done_at=$done_at elapsed=$FUZZ_ELAPSED budget=$FUZZ_BUDGET)"
   fi
 fi
 if [ -f $RESULT/Info.plist ]; then echo "TIMING result bundle finalized"; else echo "OUTCOME result bundle not finalized" | tee -a $A/outcome.txt; fi

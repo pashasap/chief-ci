@@ -58,6 +58,7 @@ struct HomeView: View {
         self.focusModel = focusModel
         self.briefingAudio = briefingAudio
         self.actions = actions
+        _isFocusEditorOpen = State(initialValue: environment.audit?.stop.id == "focus-modal")
     }
 
     init(environment: AppEnvironment, actions: HomeActions = HomeActions()) {
@@ -94,7 +95,10 @@ struct HomeView: View {
             guard environment.audit == nil else { return }
             weatherAdapter.refreshIfAuthorized()
         }
-        .sheet(isPresented: $isFocusEditorOpen) { FocusEditorSheet(model: focusModel) }
+        .sheet(isPresented: $isFocusEditorOpen) {
+            FocusEditorSheet(model: focusModel)
+                .auditRoot(environment.audit?.stop.id == "focus-modal" ? "kit.audit.focus-modal" : nil)
+        }
         .alert("Location Access Off", isPresented: $showLocationSettingsAlert) {
             Button("Open Settings") { weatherAdapter.openAppSettings() }
             Button("Cancel", role: .cancel) {}

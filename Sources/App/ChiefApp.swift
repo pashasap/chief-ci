@@ -69,6 +69,7 @@ struct RootView: View {
                 )
                 .allowsHitTesting(orbModel.mode == .radialOpen)
             }
+            .auditRoot(screenAuditRoot)
         }
         .preferredColorScheme(.dark)
         .tint(Theme.accent)
@@ -185,13 +186,25 @@ struct RootView: View {
             orbModel.chooseRadial(.keyboard, availability: environment.recording.recordAvailability)
         case "inbox-universal-tiles":
             environment.coordinator.open(route: .tab(.inbox))
-        case "tasks-ideas":
+        case "tasks-ideas", "idea-controls", "idea-controls-xl":
             environment.today.selectedSegment = 3
             environment.coordinator.open(route: .tab(.today))
         case "search-results":
             environment.coordinator.open(route: .search)
         default:
             break
+        }
+    }
+
+    private var screenAuditRoot: String? {
+        guard let stop = environment.audit?.stop else { return nil }
+        switch stop.id {
+        case "home-bento", "home-radial-orb", "keyboard-composer",
+             "inbox-universal-tiles", "tasks-ideas", "search-results",
+             "idea-controls", "idea-controls-xl":
+            return stop.root
+        default:
+            return nil
         }
     }
 

@@ -105,7 +105,15 @@ public final class LayoutAuditFixture: FileStore, Clock, UUIDSource, TokenStore,
               {"handle":"sample-long","rev":"r1","text":"\(notes.prefix(350))","state":"open","when":{"kind":"today"}},
               {"handle":"sample-later","rev":"r1","text":"Check the supply list","state":"open","when":{"kind":"later"}}],
             "waiting":[{"handle":"sample-waiting","rev":"r1","text":"Await sample delivery","state":"open"}],
-            "candidates":[{"handle":"sample-idea","rev":"r1","text":"Plan a demo","state":"open"}]
+            "candidates":[{"handle":"sample-idea","rev":"r1","text":"Plan a demo","state":"open"}],
+            "proposals":[
+              {"handle":"prop-1","rev":"r1","would":"Send Q4 board briefing summary before 5pm","because":"Board sync moved to tomorrow morning","state":"open"},
+              {"handle":"prop-2","rev":"r1","would":"Group three vendor invoices under Operations","because":"Monthly close checklist runs Friday","state":"open"},
+              {"handle":"prop-3","rev":"r1","would":"Schedule dentist follow-up for next Tuesday","because":"Reminder has stayed open for two weeks","state":"open"}
+            ],
+            "questions":[
+              {"handle":"q-1","rev":"r1","question":"Should Factory focus auto-tag build regressions?","options":["Yes, auto-tag","Ask each time"],"state":"open"}
+            ]
             """
     }
 
