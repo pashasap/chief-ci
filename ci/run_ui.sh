@@ -105,7 +105,20 @@ if [ "${AUDIT_FUZZ:-0}" = "1" ] && [ -f "ci/UITests/AuditFuzzUITests.swift" ] &&
       -destination "platform=iOS Simulator,id=$SIM_UDID" \
       -test-timeouts-enabled YES -default-test-execution-time-allowance 60 -maximum-test-execution-time-allowance 60 \
       -parallel-testing-enabled NO -resultBundlePath $FUZZ_RESULT \
-      -only-testing:AuditStopsUITests/AuditFuzzUITests > $A/fuzz-test.log 2>&1 || true
+      -only-testing:AuditStopsUITests/AuditFuzzUITests > $A/fuzz-test.log 2>&1 &
+    fpid=$!
+    FUZZ_HARD_CAP=$((EXTENDED - 30))
+    while kill -0 $fpid 2>/dev/null; do
+      sleep 2
+      if [ $(( $(date +%s) - JOB_T0 )) -ge $FUZZ_HARD_CAP ]; then
+        echo "TIMING fuzz cutoff at $(( $(date +%s) - JOB_T0 ))s" | tee -a $A/outcome.txt
+        kill $fpid 2>/dev/null
+        for _ in $(seq 1 10); do kill -0 $fpid 2>/dev/null || break; sleep 1; done
+        kill -9 $fpid 2>/dev/null
+        break
+      fi
+    done
+    wait $fpid 2>/dev/null || true
     echo "TIMING fuzz done at $(( $(date +%s) - JOB_T0 ))s"
   else
     echo "TIMING fuzz skipped (done_at=$done_at elapsed=$FUZZ_ELAPSED budget=$FUZZ_BUDGET)"
