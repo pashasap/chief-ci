@@ -1,7 +1,18 @@
 import Foundation
 
 public enum AppTab: Equatable, Hashable, Sendable {
-    case inbox, today, brief, settings
+    case home, inbox, today, settings
+}
+
+public extension AppTab {
+    /// Legacy alias while Wave 2 migrates BriefView from a root tab to a Home sub-route.
+    static var brief: AppTab { .home }
+}
+
+public enum AppRoute: Equatable, Hashable, Sendable {
+    case tab(AppTab)
+    case brief
+    case search
 }
 
 public enum AppAction: Equatable, Sendable {
@@ -9,11 +20,12 @@ public enum AppAction: Equatable, Sendable {
     /// Carries the full link text.
     case pair(String)
     case openTab(AppTab)
+    case openRoute(AppRoute)
 }
 
-/// Maps incoming links to actions. Only the two known links do anything.
+/// Maps incoming links and notifications to app actions.
 public struct AppRouter: Sendable {
-    public static let tabs: [AppTab] = [.inbox, .today, .brief, .settings]
+    public static let tabs: [AppTab] = [.home, .inbox, .today, .settings]
 
     public init() {}
 
@@ -27,7 +39,10 @@ public struct AppRouter: Sendable {
     }
 
     public func handle(notificationIdentifier: String) -> AppAction? {
-        NotificationRouter().destination(for: notificationIdentifier).map { .openTab($0) }
+        if notificationIdentifier == NotificationIdentifier.briefReminder {
+            return .openRoute(.brief)
+        }
+        return NotificationRouter().destination(for: notificationIdentifier).map { .openTab($0) }
     }
 
     /// An app launch without a link does nothing, so it never starts a recording.

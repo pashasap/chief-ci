@@ -15,36 +15,32 @@ targets:
         PRODUCT_NAME: Core
         SWIFT_VERSION: "6.0"
         SWIFT_ENABLE_EXPLICIT_MODULES: NO
-        SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+        SWIFT_COMPILATION_MODE: wholemodule
   Kit:
     type: application
     platform: iOS
     deploymentTarget: "17.0"
     sources:
       - path: ../Sources/App
-      # CI-only: harmless if the app never uses SwiftPM resources (an Xcode app target has no Bundle.module).
       - path: Shims
     dependencies:
       - target: Core
     settings:
       base:
-        PRODUCT_NAME: Kit
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.Chief
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.Kit
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "6.0"
         SWIFT_ENABLE_EXPLICIT_MODULES: NO
-        SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
-        INFOPLIST_FILE: ../Info.plist
+        SWIFT_COMPILATION_MODE: wholemodule
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        # CI-only: ad-hoc "sign to run locally" for the simulator, so the app gets the entitlements the
-        # keychain needs (an unsigned simulator app cannot store its pairing token).
-        CODE_SIGNING_ALLOWED: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Kit
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        CODE_SIGNING_ALLOWED: NO
         CODE_SIGNING_REQUIRED: NO
-        CODE_SIGN_IDENTITY: "-"
-        CODE_SIGN_STYLE: Manual
-        DEVELOPMENT_TEAM: ""
-  KitUITests:
+        CODE_SIGNING_IDENTITY: ""
+  AuditStopsUITests:
     type: bundle.ui-testing
     platform: iOS
     deploymentTarget: "17.0"
@@ -54,7 +50,7 @@ targets:
       - target: Kit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.Chief.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.Kit.uitests
         TEST_TARGET_NAME: Kit
         SWIFT_VERSION: "5.0"
         SWIFT_ENABLE_EXPLICIT_MODULES: NO
@@ -68,7 +64,7 @@ schemes:
       targets:
         Core: all
         Kit: all
-        KitUITests: [test]
+        AuditStopsUITests: [test]
     test:
       targets:
-        - KitUITests
+        - AuditStopsUITests

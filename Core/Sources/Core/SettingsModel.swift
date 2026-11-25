@@ -16,6 +16,8 @@ public struct SettingsServices: Sendable {
     public var clock: any Clock
     public var timeZone: TimeZone
     public var transcribers: TranscriberAvailability
+    /// Set by the app target from the staged package; nil leaves the build and revision rows at "unknown".
+    public var bundleMetadata: (any BundleMetadata)?
 
     public init(
         files: any FileStore, clock: any Clock, timeZone: TimeZone, transcribers: TranscriberAvailability
@@ -24,6 +26,13 @@ public struct SettingsServices: Sendable {
         self.clock = clock
         self.timeZone = timeZone
         self.transcribers = transcribers
+    }
+
+    /// A copy carrying the staged build and revision metadata.
+    public func withBundleMetadata(_ metadata: (any BundleMetadata)?) -> SettingsServices {
+        var copy = self
+        copy.bundleMetadata = metadata
+        return copy
     }
 }
 
@@ -43,6 +52,8 @@ public final class SettingsModel {
     private var revision = 0
     /// Set by the app target; nil leaves the Reminders section off.
     public var reminders: ReminderModel?
+    /// Set by the app target; its own unavailable reason is shown in the copied diagnostics.
+    public var recorder: RecordingModel?
     @ObservationIgnored public var afterUnpair: (@MainActor () -> Void)?
     @ObservationIgnored public var afterPairing: (@MainActor () async -> Void)?
 

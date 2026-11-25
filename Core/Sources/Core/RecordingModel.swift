@@ -22,6 +22,14 @@ public final class RecordingModel {
     public private(set) var isClosed = false
     public private(set) var isConfirmingTypeInstead = false
     public private(set) var isTypingInstead = false
+    public private(set) var waveformSamples: [Double] = []
+    public nonisolated static let microphoneDenied = "Microphone not allowed"
+    public nonisolated static let startFailedText = "Could not start recording"
+    public static let storageText = "Could not save this recording on this iPhone."
+    private static let waveformCapacity = 32
+    private var isFinishing = false
+    /// Set when the last attempt to persist a new record failed; a later successful attempt clears it.
+    private var storageUnavailable = false
 
     /// The recorder reading clamped to 0...1.
     public var level: Double {
@@ -43,34 +51,72 @@ public final class RecordingModel {
         self.osMajor = osMajor
     }
 
+    /// The recorder and its finalize step are the only owners of a start request; earlier captures never gate it.
+    public var recordAvailability: RecordAvailability {
+        RecordAvailability(reason: unavailableReason)
+    }
+
+    private var unavailableReason: RecordUnavailableReason? {
+        if isStarting { return .starting }
+        if isRecording { return .recording }
+        if isFinishing { return .finishing }
+        return storageUnavailable ? .storage : nil
+    }
+
+    /// True while nothing owns the recorder, so a start may be attempted even after a storage failure.
+    public var canStart: Bool { !isStarting && !isRecording && !isFinishing }
+
+    public var isPanelPresented: Bool {
+        isTypingInstead || (!isClosed && (isStarting || isRecording || isFinishing || savedMessage != nil || message != nil))
+    }
+
+    public func closeTypedPanel() {
+        isTypingInstead = false
+        isClosed = true
+    }
+
     public func start() async {
-        guard !isRecording, !isStarting else { return }
-        if isTranscribing {
-            // The last capture is still being transcribed. Say so and reopen the screen with its Done control:
-            // a screen left closed here could never be dismissed.
-            message = Self.busyText
-            isClosed = false
-            return
-        }
+        guard canStart else { return }
         isStarting = true
         defer { isStarting = false }
+        await beginRecording()
+    }
+
+    private func beginRecording() async {
+        resetPresentation()
+        let id = environment.ids.next().uuidString.lowercased()
+        guard persistStart(id) else { return }
+        await startRecorder(id)
+    }
+
+    private func resetPresentation() {
         lastSavedId = nil
         closeAt = nil
-        let id = environment.ids.next().uuidString.lowercased()
         message = nil
         savedMessage = nil
         transcript = ""
         timerText = TimerFormat.text(0)
+        waveformSamples = []
         isDelivered = false
         isClosed = false
         isConfirmingTypeInstead = false
         isTypingInstead = false
+        confirmingDiscard = false
+    }
+
+    private func persistStart(_ id: String) -> Bool {
         do {
             try store.save(.voice(clientId: id, recordedAt: environment.clock.now, durationS: 0))
+            storageUnavailable = false
+            return true
         } catch {
-            message = "Could not save this recording"
-            return
+            storageUnavailable = true
+            message = Self.storageText
+            return false
         }
+    }
+
+    private func startRecorder(_ id: String) async {
         pipeline.uploader.recordingId = id
         do {
             try await pipeline.recorder.start(clientId: id)
@@ -79,7 +125,7 @@ public final class RecordingModel {
             pipeline.uploader.recordingId = nil
             isRecording = false
             message = (error as? RecorderError) == .permissionDenied
-                ? "Microphone not allowed" : "Could not start recording"
+                ? Self.microphoneDenied : Self.startFailedText
             return
         }
         guard !isClosed else {
@@ -94,12 +140,25 @@ public final class RecordingModel {
         environment.haptics.recordingStarted()
     }
 
+    @ObservationIgnored private var tickTask: Task<Void, Never>?
+
+    /// An unstructured model-owned task survives panel removal and tab navigation.
+    public func requestTick() {
+        guard tickTask == nil else { return }
+        tickTask = Task { [self] in
+            await tick()
+            tickTask = nil
+        }
+    }
+
     public func tick() async {
         updateDelivery()
         if let closeAt, environment.clock.now >= closeAt { isClosed = true }
         guard isRecording else { return }
         let elapsed = pipeline.recorder.elapsed
         timerText = TimerFormat.text(elapsed)
+        if waveformSamples.count == Self.waveformCapacity { waveformSamples.removeFirst() }
+        waveformSamples.append(level)
         if elapsed >= Self.maxSeconds { await stop() }
     }
 
@@ -108,16 +167,38 @@ public final class RecordingModel {
     }
 
     public func stop() async {
+        await finishRecording(writeInstead: false)
+    }
+
+    private func finishRecording(writeInstead: Bool) async {
         guard isRecording, let id = clientId else { return }
+        isFinishing = true
         isRecording = false
         clientId = nil
-        let duration = pipeline.recorder.elapsed
-        // A new recording may begin while this one is still being sent: leave its lease and its protection alone.
-        defer {
-            if !isRecording { environment.lease.end() }
-            if pipeline.uploader.recordingId == id { pipeline.uploader.recordingId = nil }
-        }
         isConfirmingTypeInstead = false
+        let duration = pipeline.recorder.elapsed
+        // Finalization owns the recorder only until the audio is on disk; transcription does not.
+        let audio = await saveAudio(id: id)
+        isFinishing = false
+        guard let audio else {
+            environment.lease.end()
+            releaseRecordingId(id)
+            return
+        }
+        await transcribeSaved(audio, id: id, duration: duration)
+        environment.lease.end()
+        releaseRecordingId(id)
+        if writeInstead { openWrite() }
+        await pipeline.uploader.run()
+        updateDelivery()
+    }
+
+    /// Drop the upload guard only while it still guards this capture; a newer recording keeps its own.
+    private func releaseRecordingId(_ id: String) {
+        if pipeline.uploader.recordingId == id { pipeline.uploader.recordingId = nil }
+    }
+
+    private func saveAudio(id: String) async -> Data? {
         let audio: Data
         do {
             audio = try await pipeline.recorder.stop()
@@ -125,11 +206,15 @@ public final class RecordingModel {
         } catch {
             store.remove(clientId: id)
             message = "Could not save this recording"
-            return
+            return nil
         }
         environment.haptics.recordingSaved()
         savedMessage = "Saved on this iPhone"
         lastSavedId = id
+        return audio
+    }
+
+    private func transcribeSaved(_ audio: Data, id: String, duration: TimeInterval) async {
         isTranscribing = true
         let outcome = await transcribe(audio)
         isTranscribing = false
@@ -145,9 +230,6 @@ public final class RecordingModel {
         } catch {
             message = "Could not save the transcript. The recording is kept and will be sent."
         }
-        if pipeline.uploader.recordingId == id { pipeline.uploader.recordingId = nil }
-        await pipeline.uploader.run()
-        updateDelivery()
     }
 
     public func discard() async {
@@ -165,6 +247,15 @@ public final class RecordingModel {
         isClosed = true
     }
 
+    func openWrite() {
+        if isRecording {
+            requestTypeInstead()
+        } else if !isFinishing {
+            isClosed = true
+            isTypingInstead = true
+        }
+    }
+
     public func requestTypeInstead() {
         guard isRecording else { return }
         confirmingDiscard = false
@@ -175,20 +266,24 @@ public final class RecordingModel {
         isConfirmingTypeInstead = false
     }
 
-    /// Ends the recording without saving it and hands over to typing.
     public func confirmTypeInstead() async {
         isConfirmingTypeInstead = false
-        guard await abandon() else { return }
-        isTypingInstead = !confirmingDiscard
-        isClosed = true
+        if confirmingDiscard {
+            guard await abandon() else { return }
+            isClosed = true
+        } else {
+            await finishRecording(writeInstead: true)
+        }
     }
 
     private func abandon() async -> Bool {
         guard isRecording, let id = clientId else { return false }
+        isFinishing = true
+        defer { isFinishing = false }
         isRecording = false
         clientId = nil
         await pipeline.recorder.cancel()
-        pipeline.uploader.recordingId = nil
+        releaseRecordingId(id)
         store.remove(clientId: id)
         savedMessage = nil
         timerText = TimerFormat.text(0)
@@ -204,6 +299,7 @@ public final class RecordingModel {
     }
 
     public func recordInstead() async {
+        guard canStart else { return }
         isTypingInstead = false
         await start()
     }

@@ -90,4 +90,41 @@ public struct BriefScreen {
         }
         return rows.sorted { $0.date != $1.date ? $0.date > $1.date : $0.title < $1.title }
     }
+
+    public func liveDateHeading(now: Date, timeZone: TimeZone) -> String {
+        HomeScreen.compactDate(from: snapshot?.today, fallbackNow: now, timeZone: timeZone)
+    }
+
+    public var executiveFocusSummary: String {
+        if let brief = snapshot?.brief, brief.recorded {
+            let lines = brief.lines.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            if !lines.isEmpty { return lines.joined(separator: "\n") }
+        }
+        return recordedEmpty ?? BriefRecordedSection.emptyNote
+    }
+
+    public func focusScreeningSignals(for focus: FocusFilter?, allFilters: [FocusFilter] = []) -> [String] {
+        if let focus {
+            let candidates = (snapshot?.candidates ?? []).filter { $0.state == nil || $0.state == "open" }
+            let matched = candidates.filter { focus.matches(text: $0.text + " " + ($0.note ?? "")) }.count
+            return [
+                "Active lens: \(focus.label) — \(focus.purpose)",
+                "\(matched) open idea(s) match \(focus.label) screening rules.",
+            ]
+        }
+        let names = allFilters.map(\.label)
+        let lensSummary = names.isEmpty ? "Factory, Personal" : names.joined(separator: ", ")
+        let openIdeas = (snapshot?.candidates ?? []).filter { $0.state == nil || $0.state == "open" }.count
+        let openProposals = (snapshot?.proposals ?? []).filter { $0.state == "open" }.count
+        return [
+            "Screening lenses ready: \(lensSummary).",
+            "\(openProposals) open proposal(s) and \(openIdeas) open idea(s) available.",
+        ]
+    }
+
+    public func spokenBriefScript(now: Date, timeZone: TimeZone, focus: FocusFilter? = nil) -> String {
+        let heading = liveDateHeading(now: now, timeZone: timeZone)
+        let focusLine = focus.map { "Active focus: \($0.label). " } ?? ""
+        return "Daily Briefing for \(heading). \(focusLine)\(executiveFocusSummary)"
+    }
 }

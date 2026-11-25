@@ -1,133 +1,232 @@
 import SwiftUI
 import Core
 
-/// Renders the Core `TodayScreen` description and nothing else.
+/// Top-level Tasks page (`Today`, `Later`, `Waiting`, `Ideas`) rendered with Obsidian Liquid Glass Universal Tiles.
 struct TodayView: View {
-    let model: TodayModel
-    let inbox: InboxModel
     let environment: AppEnvironment
-    @State private var sheetHandle: String?
-    private var selected: Int { model.selectedSegment }
-    @State private var now = Date()
+    let layout: RecordingPanelLayout
+    let activeFocus: String?
+    let onOpenChangeComposer: ((String, String) -> Void)?
 
-    private var screen: TodayScreen { TodayScreen(model: model) }
+    @Environment(\.dynamicTypeSize) private var textSize
+    @State private var sheetHandle: String?
+    @State private var editTarget: TileEditTarget?
+    @State private var framingStore = FramingSignalStore.shared
+    @State private var deferrals = TileDeferralStore.shared
+
+    init(
+        environment: AppEnvironment,
+        layout: RecordingPanelLayout,
+        activeFocus: String? = nil,
+        onOpenChangeComposer: ((String, String) -> Void)? = nil
+    ) {
+        self.environment = environment
+        self.layout = layout
+        self.activeFocus = activeFocus
+        self.onOpenChangeComposer = onOpenChangeComposer
+    }
+
+    private var model: TodayModel { environment.today }
+    private var inbox: InboxModel { environment.inbox }
+    private var screen: TodayScreen {
+        TodayScreen(model: model).presented(
+            in: RecordingPanelLayout(
+                width: layout.width, height: layout.height, largestText: textSize.isAccessibilitySize
+            ),
+            focus: activeFocus,
+            deferrals: deferrals
+        )
+    }
 
     var body: some View {
-        let _ = now  // reading it makes the view redraw when the Done bar expires
-        let screen = screen
-        let segments = screen.segments
-        NavigationStack {
-            VStack(spacing: 0) {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        notes(screen)
-                        Picker(screen.segmentLabel, selection: Binding(get: { selected }, set: { model.selectedSegment = $0 })) {
-                            ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
-                                Text("\(segment.title) \(segment.count)").tag(index)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        if segments.indices.contains(selected) { segmentView(segments[selected], screen) }
-                    }
-                    .padding(16)
-                }
-
+        let current = screen
+        VStack(spacing: 0) {
+            if current.usesContentHeader {
+                todayContent(current)
+            } else {
+                todayContent(current)
+                confirmations.padding(.horizontal, 16)
             }
-            .background(Theme.background)
-            .navigationTitle(screen.header)
-            .refreshable { await inbox.pullToRefresh() }
         }
+        .background(Color.clear)
+        .overlay(alignment: .top) { TransientToastBanner(message: current.message) }
+        .refreshable { await inbox.pullToRefresh() }
         .sheet(isPresented: sheetOpen) {
             if let handle = sheetHandle { TaskSheetView(handle: handle, environment: environment) }
         }
-        .task(id: screen.bar?.undo.action) { await expireBar() }
+        .sheet(isPresented: moreOpen) { metadataSheet(current) }
+        .sheet(item: $editTarget) { target in
+            TileChangeComposerSheet(target: target) { text in
+                Task { await current.submitTileChange(handle: target.id, sourceKind: target.sourceKind, text: text) }
+            }
+        }
+    }
+
+    private var confirmations: some View {
+        VStack(spacing: 0) {
+            ConfirmationBar(decisions: environment.decisions)
+            KitLineBar { environment.uploader.kitBar }
+        }
+    }
+
+    private func todayContent(_ screen: TodayScreen) -> some View {
+        let segments = screen.segments
+        return ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    if screen.usesContentHeader { confirmations.id("today-confirmations") }
+                    tasksHeader(screen)
+                    segmentSelector(segments, screen)
+                    notes(screen)
+                    if let selected = segments.first(where: \.isSelected) { segmentView(selected, screen) }
+                }
+                .padding(16)
+            }
+            .onChange(of: environment.decisions.actionSerial) {
+                if screen.usesContentHeader, environment.decisions.actionBar != nil {
+                    proxy.scrollTo("today-confirmations", anchor: .top)
+                }
+            }
+        }
+    }
+
+    private func tasksHeader(_ screen: TodayScreen) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(screen.eyebrow)
+                .font(.caption.weight(.semibold))
+                .textCase(.uppercase)
+                .foregroundStyle(Theme.accent)
+            HStack(alignment: .firstTextBaseline) {
+                Text(screen.heading)
+                    .font(.largeTitle.bold())
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(screen.headerLineLimit)
+                    .wrapping()
+                    .accessibilityAddTraits(.isHeader)
+                Spacer()
+                if let dateLabel = screen.dateLabel {
+                    Text(dateLabel)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(Theme.secondaryText)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func metadataSheet(_ screen: TodayScreen) -> some View {
+        if let metadata: TaskMetadataScreen = screen.more {
+            TaskMetadataView(screen: metadata) { Task { await screen.perform(metadata.done) } }
+        }
+    }
+
+    private var moreOpen: Binding<Bool> {
+        Binding(get: { screen.more != nil }, set: { if !$0 { model.moreHandle = nil } })
     }
 
     private var sheetOpen: Binding<Bool> {
         Binding(get: { sheetHandle != nil }, set: { if !$0 { sheetHandle = nil } })
     }
 
+    @ViewBuilder private func segmentSelector(_ segments: [TodaySegment], _ screen: TodayScreen) -> some View {
+        let strip = AccessibleTodaySegments(segments: segments, label: screen.segmentLabel, select: screen.selectSegment)
+        if screen.scalableText && screen.scrollsSegmentSelector {
+            FittingHorizontalRow {
+                ScrollView(.horizontal) { strip }
+            }
+        } else {
+            FittingHorizontalRow { strip }
+        }
+    }
+
     @ViewBuilder private func notes(_ screen: TodayScreen) -> some View {
         if !screen.updatedText.isEmpty { Text(screen.updatedText).foregroundStyle(Theme.secondaryText).wrapping() }
         if let text = screen.notice { Text(text).foregroundStyle(Theme.amber).wrapping() }
-        if let text = screen.message { Text(text).foregroundStyle(Theme.amber).wrapping() }
         KitLineBar { TodayScreen(model: model).kitLine }
     }
 
     @ViewBuilder private func segmentView(_ segment: TodaySegment, _ screen: TodayScreen) -> some View {
         if let intro = segment.intro { Text(intro).foregroundStyle(Theme.secondaryText).wrapping() }
-        if let empty = segment.emptyText { Text(empty).foregroundStyle(Theme.secondaryText).wrapping() }
-        ForEach(segment.tasks, id: \.handle) { taskRow($0, screen) }
-        ForEach(segment.waiting, id: \.handle) { waitingCard($0, screen) }
-        ForEach(segment.ideas, id: \.handle) { idea in
-            VStack(alignment: .leading, spacing: 4) {
-                Text(idea.text).wrapping()
-                if let note = idea.note { Text(note).font(.footnote).foregroundStyle(Theme.secondaryText).wrapping() }
-                Text(idea.handle).font(.caption2).foregroundStyle(Theme.secondaryText)
+        let selectedIndex = model.selectedSegment
+        let tiles = screen.universalTiles(for: selectedIndex, framingStore: framingStore, deferrals: deferrals)
+        if selectedIndex == 0 || selectedIndex == 1 {
+            let taskLookup = Dictionary(uniqueKeysWithValues: segment.tasks.map { ($0.handle, $0) })
+            if tiles.isEmpty, let empty = segment.emptyText { Text(empty).foregroundStyle(Theme.secondaryText).wrapping() }
+            ForEach(tiles) { tile in
+                if let row = taskLookup[tile.id] {
+                    taskRow(row, tile: tile, screen: screen)
+                } else {
+                    UniversalTaskTileView(tile: tile, callbacks: tileCallbacks(tile, screen: screen))
+                }
             }
-            .card()
-        }
-    }
-
-    private func taskRow(_ row: TodayTaskRow, _ screen: TodayScreen) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button { sheetHandle = row.handle } label: {
-                Text(row.text).lineLimit(row.textLineLimit).strikethrough(row.isStruck)
-                    .foregroundStyle(Theme.text).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(row.text)
-            Text(row.handle).font(.caption2).foregroundStyle(Theme.secondaryText)
-            HStack {
-                Text(row.pill).font(.caption).foregroundStyle(Theme.secondaryText)
-                if let mark = row.overdueMark { Text(mark).font(.caption.bold()).foregroundStyle(Theme.destructive) }
-            }
-            if let note = row.note, let limit = row.noteLineLimit {
-                Text(note).font(.footnote).foregroundStyle(Theme.secondaryText).lineLimit(limit)
-            }
-            controls(row.controls, screen)
-        }
-        .card()
-    }
-
-    private func waitingCard(_ card: TodayWaitingCard, _ screen: TodayScreen) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(card.handle).font(.caption2).foregroundStyle(Theme.secondaryText)
-            Text(card.text).wrapping()
-            controls(card.controls, screen)
-        }
-        .card()
-    }
-
-    private func controls(_ controls: [InboxControl], _ screen: TodayScreen) -> some View {
-        HStack {
-            ForEach(Array(controls.enumerated()), id: \.offset) { _, control in
-                ControlButton(control: control) { Task { await screen.perform(control) } }
+        } else {
+            if tiles.isEmpty, let empty = segment.emptyText { Text(empty).foregroundStyle(Theme.secondaryText).wrapping() }
+            ForEach(tiles) { tile in
+                UniversalTaskTileView(tile: tile, callbacks: tileCallbacks(tile, screen: screen))
             }
         }
     }
 
-    private func barView(_ bar: TodayBar, _ screen: TodayScreen) -> some View {
-        HStack {
-            Text(bar.message)
-            Spacer()
-            ControlButton(control: bar.undo) { Task { await screen.perform(bar.undo) } }
+    private func taskRow(_ row: TodayTaskRow, tile: UniversalTaskTile, screen: TodayScreen) -> some View {
+        var callbacks = tileCallbacks(tile, screen: screen)
+        callbacks.onTapTitle = { sheetHandle = row.handle }
+        return UniversalTaskTileView(tile: tile, callbacks: callbacks) {
+            Text(row.text)
+                .font(.body.weight(.medium))
+                .foregroundStyle(Theme.text)
+                .strikethrough(row.isStruck)
+                .lineLimit(row.textLineLimit)
+                .wrapping()
         }
-        .padding(.horizontal, 16)
-        .background(Theme.card)
     }
 
-    /// The bar disappears 5 seconds after it appears; the model decides, this only asks for a redraw.
-    private func expireBar() async {
-        guard screen.bar != nil else { return }
-        try? await Task.sleep(for: .seconds(DecisionModel.undoWindow + 0.1))
-        now = Date()
+    private func tileCallbacks(_ tile: UniversalTaskTile, screen: TodayScreen) -> TileViewCallbacks {
+        TileViewCallbacks(
+            onAction: { action in
+                Task { await screen.performTileAction(action, on: tile, deferrals: deferrals) }
+            },
+            onEdit: { edited in
+                if let onOpenChangeComposer { onOpenChangeComposer(edited.id, edited.title) }
+                else { editTarget = TileEditTarget(id: edited.id, sourceKind: edited.sourceKind, title: edited.title) }
+            },
+            onRate: { signal, rated in
+                framingStore.record(signal, for: rated.id, snippet: rated.title)
+            }
+        )
     }
 }
 
-private extension View {
-    func card() -> some View {
-        padding(12).frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.cornerRadius))
+private struct AccessibleTodaySegments: View {
+    let segments: [TodaySegment]
+    let label: String
+    let select: (Int) -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+                Button { select(index) } label: {
+                    Text(segment.label)
+                        .font(.subheadline.weight(segment.isSelected ? .semibold : .regular))
+                        .foregroundStyle(segment.isSelected ? Theme.selectedTabLabel : Theme.secondaryText)
+                        .lineLimit(segment.lineLimit)
+                        .fixedSize()
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .frame(minWidth: segment.minimumWidth, minHeight: segment.minimumHeight)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background(
+                    segment.isSelected ? Theme.selectedTabFill.opacity(0.9) : Theme.glassBaseMid.opacity(0.45),
+                    in: Capsule())
+                .overlay(
+                    Capsule().strokeBorder(
+                        Theme.primaryWhite.opacity(segment.isSelected ? 0.28 : 0.10), lineWidth: 0.75))
+                .accessibilityLabel(segment.accessibilityLabel)
+                .accessibilityAddTraits(segment.isSelected ? .isSelected : [])
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(label)
     }
 }

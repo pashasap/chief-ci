@@ -1,56 +1,48 @@
-import AVFoundation
 import SwiftUI
+import UIKit
 import Core
 
-/// Full-screen recording over everything. Renders RecordingScreen and TypedCaptureScreen only.
+/// In-layout floating Liquid Glass drawer; recorder ownership remains in the environment's Core model.
 struct RecordView: View {
     let environment: AppEnvironment
-    @Environment(\.dismiss) private var dismiss
+    let layout: RecordingPanelLayout
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.openURL) private var openURL
+    @State private var dotVisible = true
 
     private var recording: RecordingModel { environment.recording }
 
     var body: some View {
         Group {
             if recording.isTypingInstead {
-                TypedCaptureView(model: environment.typed, recordInstead: {
-                    _Concurrency.Task { await recording.recordInstead() }
-                }) { dismiss() }
+                DynamicComposerSheet(
+                    model: environment.typed,
+                    availability: recording.recordAvailability,
+                    onRecordInstead: { _Concurrency.Task { await recording.recordInstead() } },
+                    onDismiss: { recording.closeTypedPanel() })
+                    .auditRoot(auditRoot(for: "independent-write"))
             } else {
                 recordingBody
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.recordBackground.ignoresSafeArea())
-        .preferredColorScheme(.dark)
-        .task { await recording.start() }
-        .task(id: recording.isClosed) { await tickWhileRecording() }
-        .onChange(of: recording.isClosed) { _, closed in
-            if closed && !recording.isTypingInstead { dismiss() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { _ in
-            _Concurrency.Task { await recording.handleInterruption() }
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
     }
 
     private var recordingBody: some View {
-        let screen = RecordingScreen(model: recording)
-        return ScrollView {
-        VStack(spacing: 20) {
-            if let status = screen.statusLabel { statusRow(status) }
-            Text(screen.timerText)
-                .font(.system(size: 56, weight: .light, design: .monospaced))
-                .foregroundStyle(Theme.recordText)
-                .accessibilityLabel("Recording time \(screen.timerText)")
-            LevelBar(level: screen.level)
-            lines(screen)
-            Spacer(minLength: 0)
-            ForEach(screen.controls, id: \.label) { control in
-                if control.action == .discard { Spacer(minLength: 20) }
-                controlButton(control)
+        let base = RecordingScreen(model: recording).presented(in: layout)
+        let screen = reduceMotion ? base.presented(in: layout, reduceMotion: true) : base
+        return Group {
+            if screen.contentScrollable {
+                ScrollView { recordingStack(screen) }
+            } else {
+                recordingStack(screen)
             }
         }
-        .padding()
-        }
+        .liquidGlassTile(glow: .purple)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+        .auditRoot(recordingAuditRoot(screen))
         .confirmationDialog(
             screen.confirmation?.title ?? "", isPresented: confirmingBinding, titleVisibility: .visible
         ) {
@@ -61,119 +53,181 @@ struct RecordView: View {
         }
     }
 
+    private func auditRoot(for id: String) -> String? {
+        guard let stop = environment.audit?.stop, stop.id == id else { return nil }
+        return stop.root
+    }
+
+    private func recordingAuditRoot(_ screen: RecordingScreen) -> String? {
+        if !screen.recoveryControls.isEmpty { return auditRoot(for: "permission-recovery") }
+        guard screen.statusLabel != nil, environment.audit?.showsRecording == true else { return nil }
+        return environment.audit?.stop.root
+    }
+
+    private func recordingStack(_ screen: RecordingScreen) -> some View {
+        VStack(spacing: 12) {
+            if screen.statusLabel != nil {
+                headerRow(screen)
+                RecordingMeter(level: screen.level, samples: screen.waveformSamples, reduceMotion: reduceMotion)
+            } else if screen.savedText != nil {
+                timer(screen)
+            }
+            lines(screen)
+            footerRow(screen)
+        }
+        .padding(14)
+    }
+
+    private func headerRow(_ screen: RecordingScreen) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 14) {
+                statusRow(screen)
+                Spacer(minLength: 8)
+                timer(screen)
+            }
+            VStack(spacing: 4) {
+                statusRow(screen)
+                timer(screen)
+            }
+        }
+    }
+
+    private func timer(_ screen: RecordingScreen) -> some View {
+        Text(screen.timerText)
+            .font(screen.scalableText ? .title2.weight(.medium).monospacedDigit()
+                : .system(size: 24, weight: .medium, design: .monospaced))
+            .foregroundStyle(Theme.color(screen.foreground))
+            .accessibilityLabel(screen.timerAccessibilityLabel)
+            .fixedSize()
+    }
+
     private var confirmingBinding: Binding<Bool> {
         Binding(
             get: { recording.isConfirmingTypeInstead },
             set: { if !$0 { recording.cancelTypeInstead() } })
     }
 
-    private func statusRow(_ text: String) -> some View {
+    private func statusRow(_ screen: RecordingScreen) -> some View {
         HStack(spacing: 8) {
-            Circle().fill(Theme.recordButton).frame(width: 10, height: 10).accessibilityHidden(true)
-            Text(text).foregroundStyle(Theme.recordText)
+            if let dot = screen.statusDot {
+                Circle()
+                    .fill(Theme.color(dot))
+                    .frame(width: 10, height: 10)
+                    .opacity(reduceMotion ? 1.0 : (dotVisible ? 1.0 : 0.25))
+                    .onAppear { startBlink() }
+                    .accessibilityHidden(true)
+            }
+            if let text = screen.statusLabel {
+                Text(text).font(.subheadline.weight(.semibold)).foregroundStyle(Theme.color(screen.foreground)).wrapping()
+            }
         }
+    }
+
+    private func startBlink() {
+        guard !reduceMotion else { dotVisible = true; return }
+        withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) { dotVisible = false }
     }
 
     private func lines(_ screen: RecordingScreen) -> some View {
         VStack(spacing: 6) {
-            ForEach(
-                [screen.savedText, screen.transcriptLine, screen.deliveryLine, recording.message]
-                    .compactMap { $0 }, id: \.self
-            ) { line in
-                Text(line).foregroundStyle(Theme.recordText).multilineTextAlignment(.center).wrapping()
+            if let preview = screen.livePreviewLine, screen.savedText == nil {
+                Text(preview)
+                    .font(.subheadline.italic())
+                    .foregroundStyle(Theme.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .wrapping()
+            }
+            ForEach([screen.savedText, screen.transcriptLine, screen.deliveryLine, screen.message].compactMap { $0 }, id: \.self) { line in
+                Text(line).font(.subheadline).foregroundStyle(Theme.recordText).multilineTextAlignment(.center).wrapping()
+            }
+        }
+    }
+
+    private func footerRow(_ screen: RecordingScreen) -> some View {
+        let activeControls = screen.recoveryFooterControls.isEmpty ? screen.footerControls : screen.recoveryFooterControls
+        return HStack(spacing: 10) {
+            ForEach(activeControls, id: \.label) { control in
+                controlButton(control)
             }
         }
     }
 
     private func controlButton(_ control: RecordingControl) -> some View {
-        Button {
+        let isPrimary = control.action == .stop || control.action == .done || control.action == .write
+        return Button {
             perform(control.action)
         } label: {
             Text(control.label)
-                .frame(maxWidth: control.isFullWidth ? .infinity : nil, minHeight: 44)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(isPrimary ? Theme.primaryWhite : Theme.text)
+                .wrapping()
+                .frame(minWidth: control.minimumTarget, maxWidth: .infinity, minHeight: control.minimumTarget)
+                .padding(.horizontal, 12)
+                .background(buttonBackground(isPrimary: isPrimary))
+                .clipShape(Capsule())
+                .overlay(Capsule().strokeBorder(Theme.primaryWhite.opacity(isPrimary ? 0.25 : 0.16), lineWidth: 1))
+                .contentShape(Rectangle())
         }
-        .buttonStyle(.borderedProminent)
-        .tint(control.isFullWidth ? Theme.recordButton : .gray)
-        .accessibilityLabel(control.label)
+        .buttonStyle(.plain)
+        .accessibilityLabel(control.accessibilityLabel)
+    }
+
+    private func buttonBackground(isPrimary: Bool) -> some ShapeStyle {
+        if isPrimary {
+            return AnyShapeStyle(LinearGradient(
+                colors: [Theme.glowCyan, Theme.glowBlue],
+                startPoint: .leading, endPoint: .trailing))
+        }
+        return AnyShapeStyle(Theme.glassBaseMid.opacity(0.72))
     }
 
     private func perform(_ action: RecordingAction) {
         switch action {
         case .stop: _Concurrency.Task { await recording.stop() }
         case .discard: _Concurrency.Task { await recording.discard() }
-        case .typeInstead: recording.requestTypeInstead()
-        case .done:
-            recording.done()
-            dismiss()
-        }
-    }
-
-    private func tickWhileRecording() async {
-        while !Task.isCancelled, !recording.isClosed {
-            await recording.tick()
-            try? await _Concurrency.Task.sleep(for: .milliseconds(200))
+        case .typeInstead, .write: _Concurrency.Task { await environment.openWrite() }
+        case .done: recording.done()
+        case .openSettings:
+            if environment.audit == nil, let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
         }
     }
 }
 
-private struct LevelBar: View {
+private struct RecordingMeter: View {
     let level: Double
+    let samples: [Double]
+    let reduceMotion: Bool
 
     var body: some View {
+        Group {
+            if reduceMotion || samples.isEmpty { levelBar }
+            else { waveform }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Microphone level")
+        .accessibilityValue(level.formatted(.percent.precision(.fractionLength(0))))
+    }
+
+    private var levelBar: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
-                Capsule().fill(Theme.recordText.opacity(0.2))
-                Capsule().fill(Theme.recordButton).frame(width: proxy.size.width * level)
+                Capsule().fill(Theme.recordText.opacity(0.18))
+                Capsule().fill(Theme.glowCyan).frame(width: proxy.size.width * level)
             }
         }
         .frame(height: 8)
-        .accessibilityHidden(true)
-    }
-}
-
-private struct TypedCaptureView: View {
-    let model: TypedCaptureModel
-    let recordInstead: () -> Void
-    let close: () -> Void
-    @FocusState private var focused: Bool
-    private var text: Binding<String> {
-        Binding(get: { model.text }, set: { model.text = $0 })
     }
 
-    var body: some View {
-        let screen = TypedCaptureScreen(model: model, text: model.text)
-        ScrollView {
-        VStack(spacing: 16) {
-            Text(screen.title).foregroundStyle(Theme.recordText).wrapping()
-            TextField(screen.placeholder, text: text, axis: .vertical)
-                .focused($focused)
-                .textFieldStyle(.plain)
-                .foregroundStyle(Theme.recordText)
-                .frame(minHeight: 120, alignment: .topLeading)
-                .accessibilityLabel(screen.placeholder)
-            if let message = screen.message {
-                Text(message).foregroundStyle(Theme.recordText).wrapping()
-            }
-            ForEach(screen.controls, id: \.label) { control in
-                Button(control.label) { perform(control.action) }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!control.isEnabled)
-                    .touchTarget()
-                    .accessibilityLabel(control.label)
-                    .accessibilityHint(control.disabledReason ?? "")
+    private var waveform: some View {
+        let bars = Array(samples.suffix(8))
+        let padded = Array(repeating: max(0.12, level * 0.4), count: max(0, 8 - bars.count)) + bars
+        return HStack(spacing: 6) {
+            ForEach(Array(padded.enumerated()), id: \.offset) { _, sample in
+                Capsule()
+                    .fill(LinearGradient(colors: [Theme.glowCyan, Theme.glowPurple], startPoint: .bottom, endPoint: .top))
+                    .frame(width: 6, height: max(6, 28 * CGFloat(sample)))
             }
         }
-        .padding()
-        }
-        .task { focused = true }
-        .onChange(of: model.isClosed) { _, closed in if closed { close() } }
-    }
-
-    private func perform(_ action: TypedCaptureAction) {
-        switch action {
-        case .save: model.save(text: model.text)
-        case .cancel: model.cancel()
-        case .recordInstead: recordInstead()
-        }
+        .frame(height: 30)
     }
 }

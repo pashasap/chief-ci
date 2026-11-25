@@ -8,6 +8,7 @@ public enum ControlState: Equatable, Sendable { case idle, pending, failed }
 public enum InboxAction: Equatable, Hashable, Sendable {
     case approve(String)
     case reject(String)
+    case dropProposal(String)
     case openChange(String)
     case sendChange(String)
     case option(String, Int)
@@ -27,6 +28,14 @@ public enum InboxAction: Equatable, Hashable, Sendable {
     case markDone(String)
     case reopen(String)
     case closeWaiting(String)
+    case taskMore(String)
+    case closeTaskMore
+    /// Today Ideas: augment a candidate, research it, and delete it behind a confirmation.
+    case augmentIdea(String)
+    case researchIdea(String)
+    case deleteIdea(String)
+    case confirmDeleteIdea(String)
+    case cancelDeleteIdea(String)
     /// Task sheet: drop with confirmation, and the "Move it" choices.
     case dropTask(String)
     case confirmDrop(String)
@@ -44,6 +53,12 @@ public struct InboxControl: Equatable, Sendable {
     public var disabledReason: String?
     public var state: ControlState
     public var action: InboxAction
+    public var icon: SuggestionIcon? = nil
+    public var accessibilityLabel: String = ""
+    public var minimumWidth: Double = 44
+    public var minimumHeight: Double = 44
+    /// Nil: a control label wraps at any text size.
+    public var labelLineLimit: Int? { nil }
 }
 
 public struct InboxTextField: Equatable, Sendable {
@@ -69,12 +84,36 @@ public struct InboxScreenRow: Equatable, Sendable {
     public var status: String?
     public var recentIndex: Int?
     public var lineLimit: Int? = 3
-    public var displayedBecause: String? { kicker == "Kit suggests" ? quotedBecause : because }
+    /// Reasons stay complete independently of the row's main-text preview limit.
+    public var reasonLineLimit: Int? { nil }
+    public var displayedBecause: String? { isProposal ? quotedBecause : because }
+    /// True for a Kit suggestion; its section carries the one "Kit suggests" label.
+    public var isProposal = false
+    /// Plain status: Sending, Did not go through, the conflict line or Queued.
+    public var statusText: String?
+    /// The item ID and queued action, shown only under Details/More.
+    public var detailsText: String?
+    /// Every string the primary row shows: never a per-row "Kit suggests" and never an ID.
+    public var primaryStrings: [String] {
+        [text, because, statusText].compactMap { $0 } + controls.map(\.label)
+    }
     public var quotedBecause: String? { because.map { "You said: “" + $0 + "”" } }
     public var sourceCaptureId: String?
     public var sourceLabel: String { "Source capture" }
     public var openCaptureLabel: String { "Open capture" }
-    public var stacksControls: Bool { true }
+    public var decisionGroup: SuggestionDecisionGroup?
+    public var statusPosition: StatusPosition = .aboveActions
+    public var decisionNotice: String?
+    public var stacksControls: Bool { decisionGroup == nil }
+    /// Elements not already rendered by the decision group.
+    public var supplementaryElements: [InboxElement] {
+        guard let decisionGroup else { return elements }
+        let grouped = decisionGroup.controls + [decisionGroup.deleteControl]
+        return elements.filter {
+            if case .control(let control) = $0 { return !grouped.contains(control) }
+            return true
+        }
+    }
     public var whenText: String?
     public var filedItems: [CapturePreview] = []
     public var moreText: String?
@@ -111,7 +150,11 @@ public struct InboxSection: Equatable, Sendable {
     public var headingText: String { count.map { title + " " + String($0) } ?? title }
     public var title: String
     public var rows: [InboxScreenRow]
+    /// "Kit suggests" once on the section that holds suggestions; rows carry no such text.
+    public var suggestionLabel: String? { rows.contains { $0.isProposal } ? KitSuggestsLabel.text : nil }
 }
+
+public enum KitSuggestsLabel { public static let text = "Kit suggests" }
 
 /// Text the user is typing, keyed by proposal or question handle.
 public struct InboxDrafts: Equatable, Sendable {
@@ -148,7 +191,21 @@ public struct InboxScreen {
         guard inbox.offersPairing else { return nil }
         return InboxControl(label: "Pair", role: .primary, isEnabled: true, state: .idle, action: .pair)
     }
-    public var needsYouCount: Int { inbox.needsYouCount }
+    public var needsYouCount: Int { waitingCount() }
+
+    public func waitingCount(deferrals: TileDeferralStore? = nil, focus: String? = nil) -> Int {
+        guard let snapshot = inbox.snapshot else { return 0 }
+        let context = TileBuildContext(inbox: inbox, decisions: decisions, deferrals: deferrals)
+        let state = TaskSearchModel.corpusState(from: context)
+        let proposals = TaskSearchModel.inboxTiles(snapshot: snapshot, state: state)
+            .filter { $0.bucket == .inbox && TaskSearchModel.matchesFocus(focus, tile: $0) }
+            .count
+        let questions = snapshot.questions.filter { question in
+            state.isActionable(handle: question.handle, isOpenInSnapshot: question.state == "open")
+                && !state.isDeferred(question.handle)
+        }.count
+        return proposals + questions + snapshot.unreadable.count
+    }
     public var uploadNotice: String? { inbox.uploader?.removedNotices.last }
     public let sections: [InboxSection]
     /// The offline reason, once, while decisions are blocked.
@@ -186,5 +243,39 @@ public struct InboxScreen {
         kitLine = decisions.kitLine
         let needsYou = sections.contains { $0.title == "Needs you" }
         needsYouEmptyText = inbox.snapshot != nil && !needsYou ? Self.needsYouEmpty : nil
+    }
+}
+
+public extension InboxScreen {
+    func universalTiles(
+        framingStore: FramingSignalStore? = nil,
+        deferrals: TileDeferralStore? = nil,
+        focus: String? = nil
+    ) -> [UniversalTaskTile] {
+        guard let snapshot = inbox.snapshot else { return [] }
+        let context = TileBuildContext(inbox: inbox, decisions: decisions, framingStore: framingStore, deferrals: deferrals)
+        return TaskSearchModel.inboxTiles(snapshot: snapshot, context: context).filter {
+            $0.bucket == .inbox && TaskSearchModel.matchesFocus(focus, tile: $0)
+        }
+    }
+
+    func performTileAction(
+        _ action: TileActionKind,
+        on tile: UniversalTaskTile,
+        deferrals: TileDeferralStore? = nil
+    ) async {
+        let context = TileBuildContext(inbox: inbox, decisions: decisions, deferrals: deferrals)
+        await UniversalTaskTile.execute(action, on: tile, context: context)
+        if action == .deferItem, decisions.state(for: tile.id) == .confirmed {
+            decisions.resetState(tile.id)
+        }
+    }
+
+    func submitTileChange(handle: String, sourceKind: TileSourceKind, text: String) async {
+        let context = TileBuildContext(inbox: inbox, decisions: decisions)
+        await UniversalTaskTile.submitChange(handle: handle, sourceKind: sourceKind, text: text, context: context)
+        if decisions.state(for: handle) == .confirmed {
+            decisions.resetState(handle)
+        }
     }
 }

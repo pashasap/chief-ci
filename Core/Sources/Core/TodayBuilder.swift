@@ -21,7 +21,7 @@ struct TodayBuilder {
                 TodaySegment(title: $0, count: 0, emptyText: model.inbox.emptyStateText)
             }
         }
-        let tasks = (snapshot?.tasks ?? []).filter { $0.state == "open" || model.isKeptDone($0.handle) }
+        let tasks = (snapshot?.tasks ?? []).filter(isOpenTask)
         let now = tasks.filter(isForToday)
         let later = tasks.filter { !isForToday($0) }
         return [
@@ -32,13 +32,7 @@ struct TodayBuilder {
         ]
     }
 
-    func bar() -> TodayBar? {
-        guard let state = model.activeBar else { return nil }
-        let undo = InboxControl(
-            label: "Undo", role: .normal, isEnabled: decisions.canDecide,
-            disabledReason: decisions.cannotDecideReason, state: .idle, action: .reopen(state.handle))
-        return TodayBar(message: state.message, undo: undo)
-    }
+    func bar() -> TodayBar? { decisions.todayBar }
 
     // MARK: Tasks
 
@@ -55,13 +49,13 @@ struct TodayBuilder {
     }
 
     private func row(_ task: TaskItem) -> TodayTaskRow {
-        let note = task.note.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        // A tile shows its text without metadata codes and at most one action line; the codes stay in More.
         let struck = model.isKeptDone(task.handle)
         let state = decisions.state(for: task.handle)
-        var row = TodayTaskRow(handle: task.handle, text: task.text, pill: pill(task.when))
+        var row = TodayTaskRow(handle: task.handle, text: TaskTileText.text(task.text), pill: pill(task.when))
         row.overdueMark = overdue(task.when) ? "Overdue" : nil
-        row.note = note
-        row.noteLineLimit = note == nil ? nil : 2
+        row.note = TaskTileText.actionSummary(task.note)
+        row.noteLineLimit = row.note == nil ? nil : TaskTileText.summaryLineLimit
         row.isStruck = struck
         row.state = (state == .confirmed && !struck) ? nil : state
         row.controls = struck ? [] : taskControls(task.handle, state: state)
@@ -71,7 +65,9 @@ struct TodayBuilder {
     private func taskControls(_ handle: String, state: DecisionState?) -> [InboxControl] {
         let free = state == nil || state == .confirmed
         let done = control("Mark done", .markDone(handle), enabled: free)
-        return [done] + retryControls(handle)
+        let more = InboxControl(label: "More", role: .normal, isEnabled: true, state: .idle,
+            action: .taskMore(handle), icon: .more, accessibilityLabel: "More")
+        return [done, more] + retryControls(handle)
     }
 
     private func overdue(_ when: When?) -> Bool {
@@ -99,8 +95,39 @@ struct TodayBuilder {
 
     // MARK: Waiting and ideas
 
+    static func emptyText(for segmentIndex: Int) -> String? {
+        switch segmentIndex {
+        case 0: return emptyToday
+        case 1: return emptyLater
+        case 2: return emptyWaiting
+        default: return nil
+        }
+    }
+
+    private func isOpenTask(_ task: TaskItem) -> Bool {
+        if model.isKeptDone(task.handle) { return true }
+        let state = decisions.state(for: task.handle)
+        if state == .confirmed {
+            if decisions.reopenedHandles.contains(task.handle) { return task.state == "open" }
+            if let conf = decisions.confirmation, conf.handle == task.handle,
+               conf.moment == .changeSent || conf.moment == .correctionAccepted {
+                return task.state == "open"
+            }
+            return false
+        }
+        if state == .pending || state == .failed { return true }
+        return task.state == "open"
+    }
+
+    private func isOpenWaiting(_ item: Waiting) -> Bool {
+        let state = decisions.state(for: item.handle)
+        if state == .confirmed { return false }
+        if state == .pending || state == .failed { return true }
+        return item.state == nil || item.state == "open"
+    }
+
     private func waitingSegment() -> TodaySegment {
-        let open = (snapshot?.waiting ?? []).filter { $0.state == nil || $0.state == "open" }
+        let open = (snapshot?.waiting ?? []).filter(isOpenWaiting)
         let cards = open.map { item -> TodayWaitingCard in
             let state = decisions.state(for: item.handle)
             let close = control("Close", .closeWaiting(item.handle), enabled: state == nil || state == .confirmed)
@@ -112,9 +139,7 @@ struct TodayBuilder {
     }
 
     private func ideasSegment() -> TodaySegment {
-        let open = (snapshot?.candidates ?? []).filter { $0.state == nil || $0.state == "open" }
-        let ideas = open.map { TodayIdeaRow(handle: $0.handle, text: $0.text, note: $0.note) }
-        return TodaySegment(title: "Ideas", count: ideas.count, ideas: ideas, intro: Self.ideasIntro)
+        TodayIdeaBuilder(model: model).segment()
     }
 
     // MARK: Controls
@@ -131,6 +156,6 @@ struct TodayBuilder {
         return InboxControl(
             label: label, role: role, isEnabled: allowed,
             disabledReason: decisions.canDecide ? nil : decisions.cannotDecideReason,
-            state: .idle, action: action)
+            state: .idle, action: action, icon: SuggestionIcon.forAction(action), accessibilityLabel: label)
     }
 }
