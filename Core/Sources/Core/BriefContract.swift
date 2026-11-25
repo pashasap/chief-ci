@@ -3,14 +3,16 @@ import Foundation
 public struct SnapshotBrief: Codable, Equatable, Sendable {
     public var recorded: Bool
     public var lines: [String]
+    public var date: String?
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        date = try c.decodeIfPresent(String.self, forKey: .date)
         recorded = try c.decodeIfPresent(Bool.self, forKey: .recorded) ?? false
         lines = try c.decodeIfPresent([String].self, forKey: .lines) ?? []
     }
 
-    enum CodingKeys: String, CodingKey { case recorded, lines }
+    enum CodingKeys: String, CodingKey { case recorded, lines, date }
 }
 
 public struct SnapshotLastResult: Codable, Equatable, Sendable {

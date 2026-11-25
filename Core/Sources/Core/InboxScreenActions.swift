@@ -10,6 +10,8 @@ extension InboxScreen {
             if let proposal = proposal(handle, in: snapshot) { await decisions.approve(proposal) }
         case .reject(let handle):
             if let proposal = proposal(handle, in: snapshot) { await decisions.reject(proposal) }
+        case .dropProposal(let handle):
+            if let proposal = proposal(handle, in: snapshot) { await decisions.drop(proposal) }
         case .sendChange(let handle):
             if let proposal = proposal(handle, in: snapshot) {
                 await decisions.change(proposal, text: drafts.texts[handle] ?? "")
@@ -26,7 +28,8 @@ extension InboxScreen {
             await decisions.retry()
         case .undo: await decisions.undoLastAction()
         case .openChange, .confirmRemove, .cancelRemove, .justAnIdea, .itsATask, .notThis, .sendCorrection,
-            .markDone, .reopen, .closeWaiting, .dropTask, .confirmDrop, .cancelDrop, .move:
+            .markDone, .reopen, .closeWaiting, .dropTask, .confirmDrop, .cancelDrop, .move, .taskMore,
+            .closeTaskMore, .augmentIdea, .researchIdea, .deleteIdea, .confirmDeleteIdea, .cancelDeleteIdea:
             break
         }
     }

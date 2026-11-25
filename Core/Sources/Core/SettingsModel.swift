@@ -16,6 +16,8 @@ public struct SettingsServices: Sendable {
     public var clock: any Clock
     public var timeZone: TimeZone
     public var transcribers: TranscriberAvailability
+    /// Set by the app target from the staged package; nil leaves the build and revision rows at "unknown".
+    public var bundleMetadata: (any BundleMetadata)?
 
     public init(
         files: any FileStore, clock: any Clock, timeZone: TimeZone, transcribers: TranscriberAvailability
@@ -24,6 +26,13 @@ public struct SettingsServices: Sendable {
         self.clock = clock
         self.timeZone = timeZone
         self.transcribers = transcribers
+    }
+
+    /// A copy carrying the staged build and revision metadata.
+    public func withBundleMetadata(_ metadata: (any BundleMetadata)?) -> SettingsServices {
+        var copy = self
+        copy.bundleMetadata = metadata
+        return copy
     }
 }
 
@@ -43,12 +52,15 @@ public final class SettingsModel {
     private var revision = 0
     /// Set by the app target; nil leaves the Reminders section off.
     public var reminders: ReminderModel?
+    /// Set by the app target; its own unavailable reason is shown in the copied diagnostics.
+    public var recorder: RecordingModel?
     @ObservationIgnored public var afterUnpair: (@MainActor () -> Void)?
     @ObservationIgnored public var afterPairing: (@MainActor () async -> Void)?
 
     @ObservationIgnored private let transport: any HTTPTransport
     @ObservationIgnored private let pairing: Pairing
     @ObservationIgnored private let pairingModel: PairingModel
+    @ObservationIgnored private let settings: any SettingsFile
     @ObservationIgnored let services: SettingsServices
     @ObservationIgnored let diagnostics: DiagnosticsStore
 
@@ -59,11 +71,29 @@ public final class SettingsModel {
         self.transport = transport
         self.pairing = Pairing(tokenStore: tokenStore, settings: settings)
         self.pairingModel = PairingModel(transport: transport, tokenStore: tokenStore, settings: settings)
+        self.settings = settings
         self.services = services
         self.diagnostics = DiagnosticsStore(files: services.files, clock: services.clock)
     }
 
     var timeZone: TimeZone { services.timeZone }
+
+    /// The name Home greets with, read live from the settings file and sanitized.
+    public var greetingName: String {
+        _ = revision
+        return GreetingName.sanitize(settings.loadGreetingName() ?? "")
+    }
+
+    /// Stores the trimmed name, or clears it when nothing but whitespace is left.
+    public func setGreetingName(_ raw: String) {
+        let name = GreetingName.sanitize(raw)
+        if name.isEmpty {
+            settings.clearGreetingName()
+        } else {
+            settings.saveGreetingName(name)
+        }
+        revision += 1
+    }
 
     public var isPaired: Bool {
         _ = revision

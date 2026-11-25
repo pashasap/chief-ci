@@ -1,8 +1,10 @@
 import Foundation
+import Observation
 
 /// Folder of named files; the real one lives in the app target, tests use an in-memory fake.
 public protocol FileStore: Sendable {
     func read(_ name: String) throws -> Data?
+    /// Atomically replaces the complete contents of a named file.
     func write(_ data: Data, name: String) throws
     func remove(_ name: String) throws
     func list() throws -> [String]
@@ -105,11 +107,20 @@ private struct Envelope: Encodable {
     }
 }
 
+@Observable
 public final class OutboxStore {
     public static let currentVersion = 1
 
-    private let files: any FileStore
-    public private(set) var notices: [String] = []
+    @ObservationIgnored private let files: any FileStore
+    @ObservationIgnored public private(set) var notices: [String] = []
+    public private(set) var revision = 0
+
+    /// Failed reads also block capture so an unreadable outbox is not treated as empty.
+    public var hasPendingCapture: Bool {
+        _ = revision
+        let pending = !records().isEmpty
+        return pending || !notices.isEmpty
+    }
 
     public init(files: any FileStore) {
         self.files = files
@@ -118,6 +129,29 @@ public final class OutboxStore {
     public func save(_ record: OutboxRecord) throws {
         let data = try JSONEncoder().encode(Envelope(record: record))
         try files.write(data, name: Self.recordName(record.clientId))
+        revision += 1
+    }
+
+    func unsentDraft() throws -> CaptureDraft? {
+        guard let draft = try CaptureDraft.read(from: files) else { return nil }
+        if try files.read(Self.recordName(draft.id)) != nil {
+            try discardDraft()
+            return nil
+        }
+        return draft
+    }
+
+    func saveDraft(_ draft: CaptureDraft) throws {
+        try files.write(JSONEncoder().encode(draft), name: CaptureDraft.fileName)
+    }
+
+    func discardDraft() throws {
+        try files.remove(CaptureDraft.fileName)
+    }
+
+    /// Do not let delivery erase the outbox evidence of a draft commit before cleanup.
+    func clearDraft(committedId: String) throws {
+        if try CaptureDraft.read(from: files)?.id == committedId { try discardDraft() }
     }
 
     public func saveAudio(_ data: Data, clientId: String) throws {
@@ -153,13 +187,14 @@ public final class OutboxStore {
             return []
         }
         var found: [OutboxRecord] = []
-        for name in names where name.hasSuffix(".json") {
+        for name in names where name.hasSuffix(".json") && name != SnapshotCache.fileName {
             if let record = load(name) { found.append(record) }
         }
         return found.sorted { ($0.recordedAt, $0.clientId) < ($1.recordedAt, $1.clientId) }
     }
 
     public func remove(clientId: String) {
+        defer { revision += 1 }
         for name in [Self.recordName(clientId), Self.audioName(clientId)] {
             do {
                 try files.remove(name)

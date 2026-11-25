@@ -101,6 +101,12 @@ final class AudioRecorderAdapter: RecorderProtocol, @unchecked Sendable {
     private let lock = NSLock()
     private var recorder: AVAudioRecorder?
     private var fileURL: URL?
+    /// The same store Settings' Diagnostics section reads, so a refused microphone stays visible there.
+    private let diagnostics: DiagnosticsStore?
+
+    init(diagnostics: DiagnosticsStore? = nil) {
+        self.diagnostics = diagnostics
+    }
 
     var elapsed: TimeInterval {
         lock.lock()
@@ -119,19 +125,32 @@ final class AudioRecorderAdapter: RecorderProtocol, @unchecked Sendable {
     }
 
     func start(clientId: String) async throws {
-        guard await AVAudioApplication.requestRecordPermission() else { throw RecorderError.permissionDenied }
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
-        try session.setActive(true)
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(clientId + ".m4a")
-        let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC), AVSampleRateKey: 44_100,
-            AVNumberOfChannelsKey: 1, AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
-        ]
-        let made = try AVAudioRecorder(url: url, settings: settings)
-        made.isMeteringEnabled = true
-        guard made.record() else { throw RecorderError.permissionDenied }
-        attach(made, url)
+        do {
+            guard await AVAudioApplication.requestRecordPermission() else {
+                throw RecorderError.permissionDenied
+            }
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+            try session.setActive(true)
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent(clientId + ".m4a")
+            let settings: [String: Any] = [
+                AVFormatIDKey: Int(kAudioFormatMPEG4AAC), AVSampleRateKey: 44_100,
+                AVNumberOfChannelsKey: 1, AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
+            ]
+            let made = try AVAudioRecorder(url: url, settings: settings)
+            made.isMeteringEnabled = true
+            guard made.record() else { throw RecorderError.permissionDenied }
+            attach(made, url)
+        } catch {
+            // Record what only this device knows, so Settings' Last problem row can show it later.
+            diagnostics?.recordProblem(Self.problemText(for: error))
+            throw error
+        }
+    }
+
+    private static func problemText(for error: Error) -> String {
+        (error as? RecorderError) == .permissionDenied
+            ? RecordingModel.microphoneDenied : RecordingModel.startFailedText
     }
 
     private func attach(_ made: AVAudioRecorder, _ url: URL) {

@@ -17,10 +17,14 @@ struct URLSessionTransport: HTTPTransport {
 }
 
 struct UserDefaultsSettings: SettingsFile {
-    private let key = "chief.baseURL"
-    func loadBaseURL() -> String? { UserDefaults.standard.string(forKey: key) }
-    func saveBaseURL(_ url: String) { UserDefaults.standard.set(url, forKey: key) }
-    func clearBaseURL() { UserDefaults.standard.removeObject(forKey: key) }
+    private let baseURLKey = "chief.baseURL"
+    private let greetingNameKey = "chief.greetingName"
+    func loadBaseURL() -> String? { UserDefaults.standard.string(forKey: baseURLKey) }
+    func saveBaseURL(_ url: String) { UserDefaults.standard.set(url, forKey: baseURLKey) }
+    func clearBaseURL() { UserDefaults.standard.removeObject(forKey: baseURLKey) }
+    func loadGreetingName() -> String? { UserDefaults.standard.string(forKey: greetingNameKey) }
+    func saveGreetingName(_ name: String) { UserDefaults.standard.set(name, forKey: greetingNameKey) }
+    func clearGreetingName() { UserDefaults.standard.removeObject(forKey: greetingNameKey) }
 }
 
 struct KeychainTokenStore: TokenStore {

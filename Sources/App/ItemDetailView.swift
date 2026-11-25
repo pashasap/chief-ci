@@ -23,20 +23,23 @@ struct ItemDetailView: View {
                 if let kicker = screen.kicker { Text(kicker).font(.caption).foregroundStyle(Theme.accent) }
                 Text(screen.text).foregroundStyle(Theme.text).lineLimit(screen.lineLimit).wrapping()
                 if let because = screen.because {
-                    Text(because).font(.callout).foregroundStyle(Theme.secondaryText).wrapping()
+                    Text(because).font(.callout).foregroundStyle(Theme.secondaryText).lineLimit(screen.reasonLineLimit).wrapping()
                 }
                 if screen.handleIsSmall { Text(screen.handle).font(.caption2).foregroundStyle(Theme.secondaryText) }
-                if let notice = screen.notice { Text(notice).foregroundStyle(Theme.amber).wrapping() }
-                if let message = environment.decisions.message { Text(message).foregroundStyle(Theme.amber).wrapping() }
-                if let caption = screen.stateCaption, screen.state != .confirmed {
-                    Text(caption).font(.caption).foregroundStyle(Theme.amber)
-                }
+                if screen.statusPosition == .aboveActions { status(screen) }
                 KitLineBar { self.screen.kitLine }
                 if let capture = screen.sourceCapture {
                     Text(capture.text).font(.callout).foregroundStyle(Theme.secondaryText).lineLimit(3).wrapping()
                     Button(screen.sourceLabel) { if let model = environment.capture(id: capture.id) { source = OpenedCapture(model: model) } }.touchTarget()
                 }
+                if let group = screen.decisionGroup {
+                    SuggestionActions(group: group) { action in
+                        if let control = screen.controls.first(where: { $0.action == action }) { run(control, screen) }
+                    }
+                }
+                if screen.statusPosition == .belowActions { caption(screen) }
                 elements(screen)
+                if screen.statusPosition == .belowActions { status(screen) }
                 if let confirmation = screen.removeConfirmation {
                     Text(confirmation.message).wrapping()
                     ControlButton(control: confirmation.confirm) { run(confirmation.confirm, screen) }
@@ -52,9 +55,26 @@ struct ItemDetailView: View {
         .onChange(of: environment.decisions.actionSerial) { _, _ in if screen.shouldClose { if let closeAfterAction { closeAfterAction() } else { dismiss() } } }
     }
 
+    private func caption(_ screen: ItemDetailScreen) -> some View {
+        Group {
+            if let caption = screen.stateCaption, screen.state != .confirmed {
+                Text(caption).font(.caption).foregroundStyle(Theme.amber)
+            }
+        }
+    }
+
+    private func status(_ screen: ItemDetailScreen) -> some View {
+        Group {
+            if screen.statusPosition == .aboveActions { caption(screen) }
+            if let message = screen.message { Text(message).foregroundStyle(Theme.amber).wrapping() }
+            if let notice = screen.notice { Text(notice).foregroundStyle(Theme.amber).wrapping() }
+            if let queued = screen.queuedLine { Text(queued).font(.caption).foregroundStyle(Theme.secondaryText) }
+        }
+    }
+
     private func elements(_ screen: ItemDetailScreen) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(screen.elements.enumerated()), id: \.offset) { _, element in
+            ForEach(Array(screen.supplementaryElements.enumerated()), id: \.offset) { _, element in
                 switch element {
                 case .control(let control): ControlButton(control: control) { run(control, screen) }
                 case .gap: Color.clear.frame(height: 16).accessibilityHidden(true)

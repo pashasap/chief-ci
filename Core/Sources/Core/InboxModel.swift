@@ -13,6 +13,8 @@ public final class InboxModel {
     public private(set) var offersPairing = false
     public private(set) var needsPolling = false
     public private(set) var snapshot: Snapshot?
+    /// When the snapshot on screen was fetched.
+    public private(set) var fetchedAt: Date?
     /// How many snapshot elements the last fetch could not decode.
     public private(set) var skippedCount = 0
 
@@ -66,6 +68,7 @@ public final class InboxModel {
         let cached = repository.cached()
         if let cached {
             snapshot = cached.snapshot
+            fetchedAt = cached.fetchedAt
             skippedCount = cached.skipped.count
             needsYou = InboxRows.needsYou(cached.snapshot)
             needsPolling = PollingPolicy.needsPolling(cached.snapshot)
@@ -76,6 +79,7 @@ public final class InboxModel {
         recent = InboxRows.recent(snapshot: cached?.snapshot, outbox: store.records())
         if cached == nil {
             snapshot = nil
+            fetchedAt = nil
             needsYou = []
             needsPolling = false
             skippedCount = 0
@@ -96,6 +100,7 @@ public final class InboxModel {
         hasLoaded = true
         let cached = repository.cached()
         snapshot = cached?.snapshot
+        fetchedAt = cached?.fetchedAt
         skippedCount = cached?.skipped.count ?? 0
         needsYou = cached.map { InboxRows.needsYou($0.snapshot) } ?? []
         recent = InboxRows.recent(snapshot: cached?.snapshot, outbox: store.records())

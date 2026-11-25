@@ -157,12 +157,13 @@ public final class UploadEngine {
         let auth = Auth(base: base, token: token)
         status = "Up to date"
         for record in records where record.clientId != recordingId {
+            if record.refusal != nil { continue }
+            if let retry = record.nextRetry, retry > clock.now { continue }
+            guard prepareDraftForDelivery(record) else { continue }
             if record.stage == .confirmed {
                 store.remove(clientId: record.clientId)
                 continue
             }
-            if record.refusal != nil { continue }
-            if let retry = record.nextRetry, retry > clock.now { continue }
             sendingId = record.clientId
             let outcome = await upload(record, auth)
             sendingId = nil
@@ -171,6 +172,19 @@ public final class UploadEngine {
                 return
             }
             if outcome == .failed { status = "Waiting to retry" }
+        }
+    }
+
+    private func prepareDraftForDelivery(_ record: OutboxRecord) -> Bool {
+        guard record.kind == "typed" else { return true }
+        do {
+            try store.clearDraft(committedId: record.clientId)
+            return true
+        } catch {
+            notices.append("Could not check draft storage before sending capture \(record.clientId)")
+            _ = fail(.failed, record)
+            status = "Waiting to retry"
+            return false
         }
     }
 

@@ -1,6 +1,25 @@
 import Foundation
 import Observation
 
+/// Optional model collaborators wired to the app loop's events.
+@MainActor
+public struct AppLoopDependencies {
+    public var recording: RecordingModel?
+    public var reminders: ReminderModel?
+    public var settings: SettingsModel?
+    public var typed: TypedCaptureModel?
+
+    public init(
+        recording: RecordingModel? = nil, reminders: ReminderModel? = nil,
+        settings: SettingsModel? = nil, typed: TypedCaptureModel? = nil
+    ) {
+        self.recording = recording
+        self.reminders = reminders
+        self.settings = settings
+        self.typed = typed
+    }
+}
+
 /// What moves by itself: uploads, refreshes and polling. The app calls the event methods and runs
 /// `nextDelay()` / `tick()` in one loop while it is in the foreground; Core decides what happens.
 @MainActor
@@ -19,14 +38,14 @@ public final class AppLoop {
     @ObservationIgnored private var reminders: ReminderModel?
 
     public init(
-        inbox: InboxModel, uploader: UploadEngine, clock: any Clock, recording: RecordingModel? = nil,
-        reminders: ReminderModel? = nil, settings: SettingsModel? = nil, typed: TypedCaptureModel? = nil
+        inbox: InboxModel, uploader: UploadEngine, clock: any Clock,
+        dependencies: AppLoopDependencies = .init()
     ) {
         self.inbox = inbox
         self.uploader = uploader
         self.clock = clock
-        self.recording = recording
-        self.reminders = reminders
+        self.recording = dependencies.recording
+        self.reminders = dependencies.reminders
         inbox.uploader = uploader
         inbox.loop = self
         uploader.afterRun = { [weak self] in
@@ -34,9 +53,9 @@ public final class AppLoop {
             self.inbox.showCached()
             await self.inbox.refresh()
         }
-        settings?.afterUnpair = { [weak self] in self?.inbox.showCached() }
-        settings?.afterPairing = { [weak self] in await self?.paired() }
-        typed?.afterSave = { [weak self] in
+        dependencies.settings?.afterUnpair = { [weak self] in self?.inbox.showCached() }
+        dependencies.settings?.afterPairing = { [weak self] in await self?.paired() }
+        dependencies.typed?.afterSave = { [weak self] in
             self?.inbox.coordinator?.selectedTab = .inbox
             self?.inbox.showCached()
             Task { await self?.captureClosed() }

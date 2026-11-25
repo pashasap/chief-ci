@@ -1,134 +1,312 @@
+import AVFoundation
 import SwiftUI
 import Core
 
 @main
 struct ChiefApp: App {
-    @State private var environment = AppEnvironment()
+    @State private var environment = AppEnvironment(audit: UserDefaults.standard.string(forKey: "auditStop")
+        .flatMap { LayoutAuditFixture(id: $0) })
+    @State private var auditReady = false
 
     var body: some Scene {
         WindowGroup {
-            RootView(environment: environment)
-                .onOpenURL { environment.coordinator.open(url: $0) }
+            if environment.audit != nil {
+                Group {
+                    if auditReady { RootView(environment: environment) }
+                    else { Color.clear }
+                }
+                .task {
+                    guard !auditReady else { return }
+                    await environment.prepareAudit()
+                    auditReady = true
+                }
+            } else {
+                RootView(environment: environment)
+                    .onOpenURL { environment.coordinator.open(url: $0) }
+            }
         }
     }
+}
+
+private struct RootSharedModels {
+    let focusModel: FocusFilterModel
+    let briefingAudio: BriefingAudioModel
+    let framingStore: FramingSignalStore
+    let onOpenChangeComposer: (String, String) -> Void
 }
 
 struct RootView: View {
     let environment: AppEnvironment
-    @State private var showRecording = false
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var textSize
+    @State private var measuredBarHeight: CGFloat = 0
+    @State private var focusModel: FocusFilterModel
+    @State private var briefingAudio: BriefingAudioModel
+    @State private var orbModel = CaptureOrbModel()
+    @State private var auditFocusEditor = false
+    @State private var framingStore: FramingSignalStore
+
+    init(environment: AppEnvironment) {
+        self.environment = environment
+        if let audit = environment.audit {
+            _focusModel = State(initialValue: FocusFilterModel(files: audit))
+            _framingStore = State(initialValue: FramingSignalStore(files: audit, clock: environment.clock))
+        } else {
+            _focusModel = State(initialValue: FocusFilterModel(files: DirectoryFileStore(folderName: "chief")))
+            _framingStore = State(initialValue: FramingSignalStore.shared)
+        }
+        _briefingAudio = State(initialValue: BriefingAudioModel(speech: BriefingAudioAdapter()))
+    }
 
     var body: some View {
-        let coordinator = environment.coordinator
-        VStack(spacing: 0) {
-            switch coordinator.selectedTab {
-            case .inbox: InboxView(environment: environment)
-            case .today: TodayView(model: environment.today, inbox: environment.inbox, environment: environment)
-            case .brief: BriefView(environment: environment)
-            case .settings: SettingsView(environment: environment)
+        GeometryReader { proxy in
+            ZStack(alignment: .bottom) {
+                AmbientScreenCanvas()
+                screenStack(proxy.size)
+                OrbRadialMenuView(
+                    model: orbModel,
+                    availability: environment.recording.recordAvailability,
+                    onVoiceSelected: present
+                )
+                .allowsHitTesting(orbModel.mode == .radialOpen)
+                .auditRoot(orbModel.mode == .radialOpen ? environment.auditRootID("radial") : nil)
             }
-            ConfirmationBar(decisions: environment.decisions)
-            KitLineBar { environment.uploader.kitBar }.padding(.horizontal, 16)
-            bottomBar(selected: coordinator.selectedTab)
         }
+        .sheet(isPresented: $auditFocusEditor) {
+            FocusEditorSheet(model: focusModel).auditRoot(environment.auditRootID("focus-editor"))
+        }
+        .preferredColorScheme(.dark)
         .tint(Theme.accent)
-        .fullScreenCover(isPresented: $showRecording, onDismiss: { Task { await environment.sync() } }) {
-            RecordView(environment: environment)
+        .task { wireCallbacksAndAuditRoute() }
+        .task(id: scenePhase) { await handleScenePhase() }
+        .task(id: environment.loop.wakeKey) { await runLoop() }
+        .task { if environment.audit == nil { await monitorRecording() } }
+        .task(id: environment.coordinator.recordRequested) {
+            if environment.coordinator.consumeRecordRequest() { present() }
         }
-        .task(id: scenePhase) {
-            if scenePhase == .active { await environment.loop.becameActive() }
-            else { environment.loop.leftForeground() }
+        .onChange(of: orbModel.mode) { _, next in syncTypedContext(for: next) }
+        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { _ in
+            guard environment.audit == nil else { return }
+            Task { await environment.recording.handleInterruption() }
         }
-        .task(id: environment.loop.wakeKey) {
-            while !Task.isCancelled, let delay = environment.loop.nextDelay() {
-                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
-                guard !Task.isCancelled else { return }
-                await environment.loop.tick()
+        .onChange(of: environment.recording.isPanelPresented) { _, presented in
+            if !presented {
+                if orbModel.mode == .recording { orbModel.dismiss() }
+                Task { await environment.sync() }
             }
         }
-        .task(id: coordinator.recordRequested) {
-            if coordinator.consumeRecordRequest() { present() }
+    }
+
+    private func screenStack(_ size: CGSize) -> some View {
+        let initial = RecordingPanelLayout(width: size.width, height: size.height,
+            largestText: textSize.isAccessibilitySize)
+        let layout = RecordingPanelLayout(width: size.width, height: size.height,
+            largestText: initial.largestText, measuredBarHeight: measuredBarHeight)
+        return VStack(spacing: 0) {
+            content(layout)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .safeAreaInset(edge: .bottom, spacing: 0) { orbComposerInset }
+            if environment.recording.isPanelPresented { recordingPanel(layout) }
+            bottomBar(initial)
+                .frame(minHeight: initial.bottomBarHeight)
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { measuredBarHeight = $0 }
+                .layoutPriority(1)
+        }
+    }
+
+    private func content(_ layout: RecordingPanelLayout) -> some View {
+        let shared = RootSharedModels(
+            focusModel: focusModel,
+            briefingAudio: briefingAudio,
+            framingStore: framingStore,
+            onOpenChangeComposer: { handle, text in orbModel.openChangeComposer(handle: handle, existingText: text) }
+        )
+        return VStack(spacing: 0) {
+            RootTabContent(environment: environment, layout: layout, shared: shared)
+            if environment.coordinator.selectedTab != .today {
+                ConfirmationBar(decisions: environment.decisions)
+                KitLineBar { environment.uploader.kitBar }.padding(.horizontal, 16)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var orbComposerInset: some View {
+        switch orbModel.mode {
+        case .attachmentPicker:
+            AttachmentPickerSheet(
+                onSelect: { orbModel.selectAttachment($0) },
+                onDismiss: { orbModel.dismiss() }
+            )
+        case .keyboardComposer:
+            DynamicComposerSheet(
+                model: environment.typed,
+                availability: environment.recording.recordAvailability,
+                onRecordInstead: {
+                    orbModel.dismiss()
+                    present()
+                },
+                onDismiss: {
+                    environment.typed.cancel()
+                    orbModel.dismiss()
+                }
+            )
+            .auditRoot(environment.auditRootID("composer"))
+        case .idle, .radialOpen, .recording:
+            EmptyView()
+        }
+    }
+
+    private func recordingPanel(_ layout: RecordingPanelLayout) -> some View {
+        RecordView(environment: environment, layout: layout)
+            .frame(height: layout.panelHeight, alignment: .bottom)
+    }
+
+    private func bottomBar(_ layout: RecordingPanelLayout) -> some View {
+        let availability = environment.recording.recordAvailability
+        let screen = BottomBarScreen(inboxCount: environment.inbox.needsYouCount,
+            availability: availability).presented(in: layout)
+        return BottomBarView(screen: screen, selected: environment.coordinator.selectedTab, select: select)
+            .overlay(alignment: .top) {
+                CaptureOrbView(model: orbModel, availability: availability, onStartVoice: present)
+                    .offset(y: -12)
+            }
+            .auditRoot(environment.auditRootID("bottom-bar"))
+    }
+
+    private func wireCallbacksAndAuditRoute() {
+        environment.typed.onEditSubmit = { submission in await submitTileEdit(submission) }
+        guard let auditStop = environment.audit?.stop else { return }
+        guard let destination = AuditRoute.destination(for: auditStop.id) else { return }
+        if let segment = destination.tasksSegment { environment.today.selectedSegment = segment }
+        _ = AuditWiring.exposedRoot(stopID: auditStop.id, coordinator: environment.coordinator)
+        switch destination.orbMode {
+        case "radial": orbModel.longPressOrb()
+        case "composer":
+            orbModel.chooseRadial(.keyboard, availability: environment.recording.recordAvailability)
+        default: break
+        }
+        auditFocusEditor = destination.showsFocusEditor
+    }
+
+    private func syncTypedContext(for mode: CaptureOrbMode) {
+        if case .keyboardComposer(let context) = mode {
+            environment.typed.apply(context: context)
+        }
+    }
+
+    private func submitTileEdit(_ submission: ComposerEditSubmission) async {
+        if let proposal = environment.inbox.snapshot?.proposals.first(where: { $0.handle == submission.handle }) {
+            await environment.decisions.change(proposal, text: submission.text)
+        } else {
+            await environment.corrections.correct(handle: submission.handle, text: submission.text)
+        }
+        orbModel.dismiss()
+    }
+
+    private func handleScenePhase() async {
+        guard environment.audit == nil else { return }
+        if scenePhase == .active { await environment.loop.becameActive() }
+        else { environment.loop.leftForeground() }
+    }
+
+    private func runLoop() async {
+        while !Task.isCancelled, let delay = environment.loop.nextDelay() {
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard !Task.isCancelled else { return }
+            await environment.loop.tick()
+        }
+    }
+
+    private func monitorRecording() async {
+        while !Task.isCancelled {
+            environment.recording.requestTick()
+            do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
         }
     }
 
     private func present() {
-        environment.typed.reopen()
-        showRecording = true
+        guard environment.recording.recordAvailability.isEnabled else { return }
+        Task { await environment.recording.start() }
     }
 
-    private func bottomBar(selected: AppTab) -> some View {
-        HStack(alignment: .bottom) {
-            ForEach(BottomBarScreen(inboxCount: environment.inbox.needsYouCount).items, id: \.kind) { item in
-                barButton(item, selected: selected).frame(maxWidth: .infinity)
-            }
-        }
-        .padding(.horizontal)
-        .padding(.top, 8)
-        .background(Theme.card.ignoresSafeArea(edges: .bottom))
-    }
-
-    private func barButton(_ item: BottomBarItem, selected: AppTab) -> some View {
-        Button {
-            switch item.kind {
-            case .inbox: environment.coordinator.selectedTab = .inbox
-            case .today: environment.coordinator.selectedTab = .today
-            case .brief: environment.coordinator.selectedTab = .brief
-            case .settings: environment.coordinator.selectedTab = .settings
-            case .record: present()
-            }
-        } label: {
-            if item.raised {
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 28))
-                    .foregroundStyle(.white)
-                    .frame(width: item.size, height: item.size)
-                    .background(Theme.recordButton, in: Circle())
-                    .shadow(radius: 4, y: 2)
-                    .offset(y: -12)
-            } else {
-                VStack(spacing: 2) {
-                    Image(systemName: icon(item.kind))
-                    HStack(spacing: 4) {
-                        Text(item.label).font(.caption)
-                        if let badge = item.badge { Text(badge).font(.caption.bold()).foregroundStyle(Theme.accent) }
-                    }
-                }
-                .foregroundStyle(isSelected(item.kind, selected) ? Theme.accent : Theme.secondaryText)
-                .frame(minWidth: item.size, minHeight: item.size)
-            }
-        }
-        .accessibilityLabel(item.accessibilityLabel)
-    }
-
-    private func icon(_ kind: BottomBarKind) -> String {
+    private func select(_ kind: BottomBarKind) {
         switch kind {
-        case .inbox: return "tray"
-        case .today: return "checklist"
-        case .brief: return "doc.text"
-        case .settings: return "gearshape"
-        case .record: return "mic.fill"
-        }
-    }
-
-    private func isSelected(_ kind: BottomBarKind, _ selected: AppTab) -> Bool {
-        switch kind {
-        case .inbox: return selected == .inbox
-        case .today: return selected == .today
-        case .brief: return selected == .brief
-        case .settings: return selected == .settings
-        case .record: return false
+        case .home: environment.coordinator.open(route: .tab(.home))
+        case .inbox: environment.coordinator.open(route: .tab(.inbox))
+        case .tasks: environment.coordinator.open(route: .tab(.today))
+        case .settings: environment.coordinator.open(route: .tab(.settings))
+        case .record:
+            orbModel.tapOrb(availability: environment.recording.recordAvailability)
+            if orbModel.mode == .recording { present() }
+        case .write: Task { await environment.openWrite() }
         }
     }
 }
 
-extension View {
-    /// Every control is at least 44 by 44 points.
-    func touchTarget() -> some View {
-        frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+private struct RootTabContent: View {
+    let environment: AppEnvironment
+    let layout: RecordingPanelLayout
+    let shared: RootSharedModels
+
+    var body: some View {
+        let activeFocus = shared.focusModel.activeFilter?.label
+        switch environment.coordinator.selectedTab {
+        case .home:
+            homeContent(activeFocus: activeFocus)
+        case .inbox:
+            InboxView(
+                environment: environment, activeFocus: activeFocus,
+                framingStore: shared.framingStore, onOpenChangeComposer: shared.onOpenChangeComposer)
+                .auditRoot(environment.auditRootID("inbox"))
+        case .today:
+            TodayView(
+                environment: environment, layout: layout,
+                activeFocus: activeFocus, onOpenChangeComposer: shared.onOpenChangeComposer)
+                .auditRoot(environment.auditRootID(tasksOwner))
+        case .settings:
+            SettingsView(environment: environment, focusModel: shared.focusModel, framingStore: shared.framingStore)
+                .auditRoot(environment.auditRootID("settings"))
+        }
     }
 
-    /// Text wraps instead of clipping.
-    func wrapping() -> some View {
-        fixedSize(horizontal: false, vertical: true)
+    private var tasksOwner: String {
+        AuditRootID.tasksOwner(segment: environment.today.selectedSegment, stopID: environment.audit?.stop.id)
+    }
+
+    @ViewBuilder
+    private func homeContent(activeFocus: String?) -> some View {
+        switch environment.coordinator.activeRoute {
+        case .brief:
+            BriefView(
+                environment: environment, focusModel: shared.focusModel,
+                briefingAudio: shared.briefingAudio, onBackHome: { environment.coordinator.open(route: .tab(.home)) })
+        case .search:
+            TaskSearchView(
+                environment: environment, activeFocus: activeFocus,
+                framingStore: shared.framingStore, onOpenChangeComposer: shared.onOpenChangeComposer)
+                .auditRoot(environment.auditRootID("search"))
+        case .tab:
+            HomeView(
+                environment: environment, focusModel: shared.focusModel,
+                briefingAudio: shared.briefingAudio, actions: homeActions)
+                .auditRoot(environment.auditRootID("home"))
+        }
+    }
+
+    private var homeActions: HomeActions {
+        HomeActions(
+            navigation: HomeNavigation(
+                onOpenSettings: { environment.coordinator.open(route: .tab(.settings)) },
+                onOpenSearch: { environment.coordinator.open(route: .search) },
+                onOpenInbox: { environment.coordinator.open(route: .tab(.inbox)) }
+            ),
+            onOpenTasksBucket: { bucket in
+                environment.today.selectedSegment = bucket.rawValue
+                environment.coordinator.open(route: .tab(.today))
+            },
+            onOpenBrief: { environment.coordinator.open(route: .brief) }
+        )
     }
 }

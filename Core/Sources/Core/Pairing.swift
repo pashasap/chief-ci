@@ -10,6 +10,17 @@ public protocol SettingsFile: Sendable {
     func loadBaseURL() -> String?
     func saveBaseURL(_ url: String)
     func clearBaseURL()
+    /// The greeting name kept beside the base URL in the settings file.
+    func loadGreetingName() -> String?
+    func saveGreetingName(_ name: String)
+    func clearGreetingName()
+}
+
+extension SettingsFile {
+    /// Default keeps the existing conformers that only store the base URL.
+    public func loadGreetingName() -> String? { nil }
+    public func saveGreetingName(_ name: String) {}
+    public func clearGreetingName() {}
 }
 
 /// Stores the pairing (base URL in the settings file, token in the token store).
