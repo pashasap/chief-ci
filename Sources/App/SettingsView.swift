@@ -200,19 +200,7 @@ struct SettingsView: View {
                 Text(voiceHint).font(.caption).foregroundStyle(Theme.amber).wrapping()
             }
             locationWeatherRow(cap)
-            HStack {
-                Text(current.reminderSwitchAccessibilityLabel)
-                    .foregroundStyle(Theme.text)
-                    .accessibilityHidden(true)
-                Spacer()
-                Toggle(isOn: Binding(get: { rem.isOn }, set: { enabled in
-                    _Concurrency.Task { await environment.reminders.setBriefReminder(on: enabled) }
-                })) { }
-                    .labelsHidden()
-                    .accessibilityLabel(current.reminderSwitchAccessibilityLabel)
-                    .tint(Theme.accent)
-            }
-            .frame(minHeight: Theme.minimumTapTarget)
+            reminderSwitchRow(current)
             DatePicker("Brief reminder time", selection: briefTimeBinding, displayedComponents: .hourAndMinute)
                 .foregroundStyle(Theme.text).frame(minHeight: Theme.minimumTapTarget)
             if let status = rem.statusText { Text(status).font(.footnote).foregroundStyle(Theme.amber).wrapping() }
@@ -220,6 +208,34 @@ struct SettingsView: View {
                 LabeledContent(entry.label, value: entry.value).foregroundStyle(Theme.secondaryText)
             }
         }.padding(16).liquidGlassTile(glow: .purple)
+    }
+
+    private func reminderSwitchRow(_ current: SettingsScreen) -> some View {
+        let isOn = current.reminders.isOn
+        return Button {
+            _Concurrency.Task { await environment.reminders.setBriefReminder(on: !isOn) }
+        } label: {
+            HStack {
+                Text(current.reminderSwitchAccessibilityLabel).foregroundStyle(Theme.text)
+                Spacer()
+                ZStack(alignment: isOn ? .trailing : .leading) {
+                    Capsule().fill(isOn ? Theme.accent : Theme.secondaryText)
+                        .frame(width: Theme.switchTrackWidth, height: Theme.switchTrackHeight)
+                    Circle().fill(Theme.primaryWhite)
+                        .frame(width: Theme.switchKnobDiameter, height: Theme.switchKnobDiameter)
+                        .padding(Theme.switchKnobInset)
+                }
+                .frame(width: Theme.switchTrackWidth, height: Theme.switchTrackHeight)
+            }
+            .frame(minHeight: Theme.minimumTapTarget)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(current.reminderSwitchAccessibilityLabel)
+        .accessibilityAddTraits(.isToggle)
+        .accessibilityValue(current.reminderSwitchAccessibilityValue)
+        .frame(minHeight: Theme.minimumTapTarget)
     }
 
     private func locationWeatherRow(_ cap: SettingsCaptureSummary) -> some View {

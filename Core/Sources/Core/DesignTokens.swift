@@ -60,4 +60,7 @@ public enum DesignTokens {
     public static let radialCircleDiameter: Double = 58
     public static let minimumTapTarget: Double = 44
     public static let compactTabHeight: Double = 56
+    public static let switchTrackWidth: Double = 51
+    public static let switchTrackHeight: Double = 31
+    public static let switchKnobInset: Double = 2
 }

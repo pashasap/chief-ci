@@ -21,6 +21,12 @@ public struct TypedCaptureField: Equatable, Sendable {
 public struct TypedCaptureScreen {
     /// The tab bar is hidden while the typed capture field is being edited.
     public static let hidesBottomBarWhileTyping = true
+
+    /// True while the orb's composer or the type-instead composer is open.
+    public static func hidesBottomBar(orbComposerOpen: Bool, typingInstead: Bool) -> Bool {
+        let anyOpen = orbComposerOpen || typingInstead
+        return hidesBottomBarWhileTyping && anyOpen
+    }
     public let title = "Type a capture"
     public let placeholder = "What is on your mind"
     public let composerPlaceholder = "Write a thought, or describe the attachment"

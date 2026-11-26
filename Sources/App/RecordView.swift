@@ -14,19 +14,8 @@ struct RecordView: View {
     private var recording: RecordingModel { environment.recording }
 
     var body: some View {
-        Group {
-            if recording.isTypingInstead {
-                DynamicComposerSheet(
-                    model: environment.typed,
-                    availability: recording.recordAvailability,
-                    onRecordInstead: { _Concurrency.Task { await recording.recordInstead() } },
-                    onDismiss: { recording.closeTypedPanel() })
-                    .auditRoot(auditRoot(for: "independent-write"))
-            } else {
-                recordingBody
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        recordingBody
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
     }
 
     private var recordingBody: some View {

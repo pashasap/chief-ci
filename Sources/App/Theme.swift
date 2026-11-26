@@ -50,6 +50,10 @@ enum Theme {
     static let radialCircleDiameter = CGFloat(DesignTokens.radialCircleDiameter)
     static let minimumTapTarget = CGFloat(DesignTokens.minimumTapTarget)
     static let compactTabHeight = CGFloat(DesignTokens.compactTabHeight)
+    static let switchTrackWidth = CGFloat(DesignTokens.switchTrackWidth)
+    static let switchTrackHeight = CGFloat(DesignTokens.switchTrackHeight)
+    static let switchKnobInset = CGFloat(DesignTokens.switchKnobInset)
+    static let switchKnobDiameter = switchTrackHeight - switchKnobInset - switchKnobInset
 
     static func color(_ token: TokenColor) -> Color {
         Color(UIColor { traits in uiColor(traits.userInterfaceStyle == .dark ? token.dark : token.light) })

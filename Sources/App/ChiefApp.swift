@@ -106,7 +106,7 @@ struct RootView: View {
             content(layout)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .safeAreaInset(edge: .bottom, spacing: .zero) { orbComposerInset }
-            if environment.recording.isPanelPresented {
+            if environment.recording.isPanelPresented && !environment.recording.isTypingInstead {
                 recordingPanel(layout)
                     .accessibilityHidden(orbModel.hidesBackgroundFromAccessibility)
                     .allowsHitTesting(!orbModel.hidesBackgroundFromAccessibility)
@@ -124,9 +124,26 @@ struct RootView: View {
 
     /// The typed composer has focus: the bottom bar and orb step aside so Discard and Send sit above the keyboard.
     private var isTyping: Bool {
-        guard TypedCaptureScreen.hidesBottomBarWhileTyping else { return false }
-        if case .keyboardComposer = orbModel.mode { return true }
-        return false
+        var composerOpen = false
+        if case .keyboardComposer = orbModel.mode { composerOpen = true }
+        return TypedCaptureScreen.hidesBottomBar(
+            orbComposerOpen: composerOpen,
+            typingInstead: environment.recording.isTypingInstead)
+    }
+
+    /// Type-instead composer from the recording panel; it sits in the keyboard-following inset.
+    private var typeInsteadComposer: some View {
+        DynamicComposerSheet(
+            model: environment.typed,
+            availability: environment.recording.recordAvailability,
+            onRecordInstead: { _Concurrency.Task { await environment.recording.recordInstead() } },
+            onDismiss: { environment.recording.closeTypedPanel() })
+            .auditRoot(typeInsteadAuditRoot)
+    }
+
+    private var typeInsteadAuditRoot: String? {
+        guard let stop = environment.audit?.stop, stop.id == "independent-write" else { return nil }
+        return stop.root
     }
 
     private func content(_ layout: RecordingPanelLayout) -> some View {
@@ -149,6 +166,15 @@ struct RootView: View {
 
     @ViewBuilder
     private var orbComposerInset: some View {
+        if environment.recording.isTypingInstead {
+            typeInsteadComposer
+        } else {
+            orbModeInset
+        }
+    }
+
+    @ViewBuilder
+    private var orbModeInset: some View {
         switch orbModel.mode {
         case .attachmentPicker:
             AttachmentPickerSheet(

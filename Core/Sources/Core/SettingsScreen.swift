@@ -157,6 +157,8 @@ public struct SettingsScreen: Equatable, Sendable {
     public let reminders: RemindersSection
     /// The reminder switch's accessibility label: the same text as the visible switch label.
     public var reminderSwitchAccessibilityLabel: String { reminders.switchLabel }
+    /// The reminder switch's accessibility value: "On" or "Off".
+    public var reminderSwitchAccessibilityValue: String { reminders.isOn ? "On" : "Off" }
     public let checkResult: String?
     public let diagnostics: DiagnosticsSection
     public let hostSummary: SettingsHostSummary
