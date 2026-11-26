@@ -101,14 +101,18 @@ public struct UniversalTaskTile: Equatable, Identifiable, Sendable {
     public var isExpanded = false
     /// True when the underlying task carries a horizon; an idea tile never does.
     public var horizonIsSet = false
+    /// Actions this tile does not offer; a Later candidate hides promotion in favour of Start, Keep and Drop.
+    public var hiddenActions: Set<TileActionKind> = []
 
     public static let swipeRightAction: TileActionKind = .approve
     public static let swipeLeftAction: TileActionKind = .reject
     public static let contextMenuActions: [TileContextAction] = [.change, .goodFraming, .badFraming]
     /// The More control's label, shared with the views and the acceptance surface.
     public static let moreMenuAccessibleName = "More actions"
+    /// The actions this tile still offers, in the order the row shows them.
+    public var visibleActions: [TileActionKind] { TileActionKind.allCases.filter { !hiddenActions.contains($0) } }
     /// Every action the tile offers, in the order the row shows them.
-    public var actionLabels: [String] { TileActionKind.allCases.map(\.label) }
+    public var actionLabels: [String] { visibleActions.map(\.label) }
     /// The untruncated stored text.
     public var fullText: String { title }
     /// The preview clamp: three lines, or nil where the layout wraps the whole text.

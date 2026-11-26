@@ -50,10 +50,32 @@ public enum TodayPickStyle {
 }
 
 /// A candidate tile in Later: Start, Keep and Drop, then Retry after a failure.
+/// The text, clamp and expansion come from the universal tile the candidate builds.
 public struct TodayCandidateTile: Equatable, Sendable {
     public var handle: String
-    public var text: String
+    public var tile: UniversalTaskTile
     public var state: DecisionState?
     public var controls: [InboxControl] = []
-    public var textLineLimit: Int? = 3
+
+    public init(handle: String, tile: UniversalTaskTile, state: DecisionState?, controls: [InboxControl] = []) {
+        self.handle = handle
+        self.tile = tile
+        self.state = state
+        self.controls = controls
+    }
+
+    /// The whole candidate text, never a shortened preview.
+    public var text: String { tile.title }
+    public var isExpanded: Bool { tile.isExpanded }
+    /// Equal to the tile's resolved limit: three lines, or nil once expanded or at XL.
+    public var textLineLimit: Int? { tile.resolvedTextLineLimit }
+
+    /// The layout's clamp plus the screen's expansion state, applied in one step.
+    public func withPresentation(lineLimit: Int?, expandedIDs: Set<String>) -> TodayCandidateTile {
+        var adapted = tile
+        adapted.textLineLimit = lineLimit
+        var copy = self
+        copy.tile = TileExpansion.tiles([adapted], expandedIDs: expandedIDs).first ?? adapted
+        return copy
+    }
 }

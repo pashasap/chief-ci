@@ -43,15 +43,16 @@ struct TodayBuilder {
     }
 
     /// A candidate tile leaves Later on confirmation; while pending it allows no second decision.
+    /// Its tile is the one the corpus builds for the handle, so its text and clamp match Search.
     private func candidateTiles() -> [TodayCandidateTile] {
-        (snapshot?.candidates ?? []).filter { $0.decision == .open && isOpenCandidate($0) }
-            .compactMap { item in
-                let state = decisions.state(for: item.handle)
-                guard state != .confirmed else { return nil }
-                return TodayCandidateTile(
-                    handle: item.handle, text: TaskTileText.text(item.text), state: state,
-                    controls: candidateControls(item.handle, state: state))
-            }
+        guard let snapshot = snapshot else { return [] }
+        let state = TaskSearchModel.corpusState(snapshot: snapshot, decisions: decisions, deferrals: nil, today: model)
+        return TaskSearchModel.candidateLaterTiles(snapshot: snapshot, state: state).map { tile in
+            let decisionState = decisions.state(for: tile.id)
+            return TodayCandidateTile(
+                handle: tile.id, tile: tile, state: decisionState,
+                controls: candidateControls(tile.id, state: decisionState))
+        }
     }
 
     private func candidateControls(_ handle: String, state: DecisionState?) -> [InboxControl] {

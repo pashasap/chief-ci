@@ -202,19 +202,12 @@ struct TodayView: View {
         .accessibilityLabel(mark.label)
     }
 
-    /// A candidate offered in Later: Start, Keep and Drop, then Retry after a failure.
+    /// A candidate offered in Later: the universal tile, then Start, Keep and Drop.
     private func candidateTile(_ tile: TodayCandidateTile, screen: TodayScreen) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(tile.text)
-                .font(.body.weight(.medium))
-                .foregroundStyle(Theme.text)
-                .lineLimit(tile.textLineLimit)
-                .wrapping()
+        VStack(alignment: .leading) {
+            UniversalTaskTileView(tile: tile.tile, callbacks: tileCallbacks(tile.tile, screen: screen))
             controlRow(tile.controls, screen: screen)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.glassBaseMid.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
     }
 
     @ViewBuilder private func controlRow(_ controls: [InboxControl], screen: TodayScreen) -> some View {

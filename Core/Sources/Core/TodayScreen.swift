@@ -138,6 +138,11 @@ public struct TodayScreen {
             if model.inbox.snapshot != nil {
                 updated.emptyText = tiles.isEmpty ? TodayBuilder.emptyText(for: index) : nil
             }
+            if index == 1 {
+                updated.candidates = updated.candidates.map {
+                    $0.withPresentation(lineLimit: largest ? nil : 3, expandedIDs: expansion.expandedIDs)
+                }
+            }
             updated.isSelected = (index == model.selectedSegment)
             updated.lineLimit = largest ? nil : 1
             if largest {

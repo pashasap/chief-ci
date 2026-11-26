@@ -224,7 +224,8 @@ public final class TaskSearchModel {
             + candidateLaterTiles(snapshot: snapshot, state: state)
     }
 
-    /// Open candidates are offered as tiles in Later, after its tasks.
+    /// Open candidates are offered as tiles in Later, after its tasks. Start, Keep and Drop replace
+    /// the promotion controls, so no promote, drop or research action stays on the tile.
     nonisolated static func candidateLaterTiles(snapshot: Snapshot, state: TileCorpusState) -> [UniversalTaskTile] {
         snapshot.candidates
             .filter { $0.decision == .open && state.movedBuckets[$0.handle] == nil }
@@ -233,6 +234,7 @@ public final class TaskSearchModel {
                 var tile = baseTile(id: item.handle, bucket: .later, kind: .candidate, title: item.text)
                 tile.rev = item.rev
                 tile.tagLabel = "Candidate"
+                tile.hiddenActions = Set(TileActionKind.allCases)
                 tile.focusLabel = UniversalTaskTile.extractFocusLabel(from: item.note)
                 tile.metaLine = item.hasResearch ? "Research queued" : (item.note ?? "Open candidate")
                 return applyState(tile, state: state)

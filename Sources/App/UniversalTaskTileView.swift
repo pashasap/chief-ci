@@ -161,20 +161,24 @@ struct UniversalTaskTileView<TitleContent: View>: View {
     @ViewBuilder private var actionRow: some View {
         if dynamicTypeSize.isAccessibilitySize {
             VStack(spacing: 8) {
-                HStack(spacing: 8) {
-                    actionButton(.approve)
-                    actionButton(.reject)
-                }
-                HStack(spacing: 8) {
-                    actionButton(.delete)
-                    actionButton(.deferItem)
-                }
+                actionPair(.approve, .reject)
+                actionPair(.delete, .deferItem)
             }
-        } else {
+        } else if !tile.visibleActions.isEmpty {
             HStack(spacing: 6) {
-                ForEach(TileActionKind.allCases, id: \.self) { kind in
+                ForEach(tile.visibleActions, id: \.self) { kind in
                     actionButton(kind)
                 }
+            }
+        }
+    }
+
+    /// Two actions on one line at Accessibility XL; an action the tile hides drops out of the pair.
+    @ViewBuilder private func actionPair(_ first: TileActionKind, _ second: TileActionKind) -> some View {
+        if tile.visibleActions.contains(first) || tile.visibleActions.contains(second) {
+            HStack(spacing: 8) {
+                if tile.visibleActions.contains(first) { actionButton(first) }
+                if tile.visibleActions.contains(second) { actionButton(second) }
             }
         }
     }
@@ -219,10 +223,18 @@ struct UniversalTaskTileView<TitleContent: View>: View {
     }
 
     @ViewBuilder private var accessibilityActions: some View {
-        Button("Approve") { callbacks.onAction(.approve) }
-        Button("Reject") { callbacks.onAction(.reject) }
-        Button("Delete") { confirmingDelete = true }
-        Button("Defer") { callbacks.onAction(.deferItem) }
+        if tile.visibleActions.contains(.approve) {
+            Button("Approve") { callbacks.onAction(.approve) }
+        }
+        if tile.visibleActions.contains(.reject) {
+            Button("Reject") { callbacks.onAction(.reject) }
+        }
+        if tile.visibleActions.contains(.delete) {
+            Button("Delete") { confirmingDelete = true }
+        }
+        if tile.visibleActions.contains(.deferItem) {
+            Button("Defer") { callbacks.onAction(.deferItem) }
+        }
         Button("Change") { callbacks.onEdit(tile) }
         Button("Good Framing") { callbacks.onRate(.up, tile) }
         Button("Bad Framing") { callbacks.onRate(.down, tile) }
@@ -232,7 +244,7 @@ struct UniversalTaskTileView<TitleContent: View>: View {
     }
 
     @ViewBuilder private var swipeUnderlay: some View {
-        if dragOffset > 8 {
+        if dragOffset > 8, tile.visibleActions.contains(.approve) {
             HStack {
                 Label("Approve", systemImage: "checkmark")
                     .font(.subheadline.weight(.semibold))
@@ -240,7 +252,7 @@ struct UniversalTaskTileView<TitleContent: View>: View {
                     .padding(.leading, 18)
                 Spacer()
             }
-        } else if dragOffset < -8 {
+        } else if dragOffset < -8, tile.visibleActions.contains(.reject) {
             HStack {
                 Spacer()
                 Label("Reject", systemImage: "xmark")
@@ -251,10 +263,13 @@ struct UniversalTaskTileView<TitleContent: View>: View {
         }
     }
 
+    /// A tile that hides its promotion actions, like a Later candidate, cannot be swiped either.
+    private var allowsSwipe: Bool { tile.isEnabled && !tile.visibleActions.isEmpty }
+
     private var swipeGesture: some Gesture {
         DragGesture(minimumDistance: 24, coordinateSpace: .local)
             .onChanged { value in
-                guard tile.isEnabled, abs(value.translation.width) > abs(value.translation.height) * 1.25 else {
+                guard allowsSwipe, abs(value.translation.width) > abs(value.translation.height) * 1.25 else {
                     dragOffset = 0
                     return
                 }
@@ -263,10 +278,10 @@ struct UniversalTaskTileView<TitleContent: View>: View {
             .onEnded { value in
                 let horizontal = value.translation.width
                 let vertical = value.translation.height
-                if tile.isEnabled && abs(horizontal) > abs(vertical) {
-                    if horizontal > 72 {
+                if allowsSwipe && abs(horizontal) > abs(vertical) {
+                    if horizontal > 72, tile.visibleActions.contains(.approve) {
                         triggerSwipe(.approve, style: .medium, text: "Approved \(tile.title)")
-                    } else if horizontal < -72 {
+                    } else if horizontal < -72, tile.visibleActions.contains(.reject) {
                         triggerSwipe(.reject, style: .light, text: "Rejected \(tile.title)")
                     }
                 }
