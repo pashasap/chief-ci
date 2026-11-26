@@ -103,3 +103,90 @@ jobs:
           if-no-files-found: ignore
           path: |
             ci/artifacts/**
+  journeys:
+    runs-on: xcode-27
+    # D-20261126-p-66, issue #86: the journeys run in their own job beside the stops, so the stops job keeps its limits.
+    # No journey starts after 1080 s; one journey is stopped after 300 s; the job's own limit is the backstop.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Journeys - Xcode and device
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          T0=$(date +%s)
+          echo "JOB_T0=$T0" >> "$GITHUB_ENV"
+          ( mkdir -p "$RUNNER_TEMP/xg" && curl -fsSL -o "$RUNNER_TEMP/xg/x.zip" https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip \
+            && unzip -q -o "$RUNNER_TEMP/xg/x.zip" -d "$RUNNER_TEMP/xg" && touch "$RUNNER_TEMP/xg/ok" ) > "$RUNNER_TEMP/xg.log" 2>&1 &
+          mkdir -p ci/journey-artifacts
+          XC=$(python3 ci/pick_xcode.py 2> ci/journey-artifacts/xcodes.txt)
+          sudo xcode-select -s "$XC/Contents/Developer"
+          INFO=$(python3 ci/pick_device.py)
+          IFS='|' read -r UDID NAME RT <<< "$INFO"
+          echo "SIM_UDID=$UDID" >> "$GITHUB_ENV"
+          echo "commit=${{ inputs.commit }} device=$NAME runtime=$RT xcode=$XC $(xcodebuild -version | tr '\n' ' ')" > ci/journey-artifacts/env.txt
+          cat ci/journey-artifacts/env.txt
+
+      - name: Journeys - build
+        timeout-minutes: 8
+        run: |
+          set +e
+          A=ci/journey-artifacts
+          for i in $(seq 1 60); do [ -f "$RUNNER_TEMP/xg/ok" ] && break; sleep 1; done
+          "$RUNNER_TEMP/xg/xcodegen/bin/xcodegen" generate --spec ci/project.yml || { cat "$RUNNER_TEMP/xg.log"; echo "OUTCOME xcodegen failed" > $A/outcome.txt; exit 1; }
+          PROJECT=$(ls -d ci/*.xcodeproj | head -1); SCHEME=$(basename "$PROJECT" .xcodeproj)
+          build () {
+            xcodebuild build-for-testing -project "$PROJECT" -scheme "$SCHEME" \
+              -destination 'generic/platform=iOS Simulator' -derivedDataPath ci/DD \
+              CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO ARCHS=$(uname -m) ONLY_ACTIVE_ARCH=NO > $A/build.log 2>&1 &
+            local pid=$! last=0 same=0
+            while kill -0 $pid 2>/dev/null; do
+              sleep 5; cur=$(wc -l < $A/build.log)
+              if [ "$cur" = "$last" ]; then same=$((same+5)); else same=0; last=$cur; fi
+              if [ $same -ge 90 ]; then kill $pid; sleep 2; kill -9 $pid 2>/dev/null; return 2; fi
+            done
+            wait $pid
+          }
+          build; RC=$?
+          if [ $RC -eq 2 ]; then echo "OUTCOME build stalled once" >> $A/outcome.txt; pkill -f SWBBuildService; sleep 2; build; RC=$?; fi
+          if [ $RC -eq 2 ]; then echo "OUTCOME build stalled twice" >> $A/outcome.txt; exit 1; fi
+          if [ $RC -ne 0 ]; then echo "OUTCOME build failed" >> $A/outcome.txt; grep -E "error:" $A/build.log | head -40; exit 1; fi
+          echo "OUTCOME build passed" >> $A/outcome.txt
+          echo "TIMING build done at $(( $(date +%s) - JOB_T0 ))s" | tee -a $A/timing.txt
+
+      - name: Journeys - stand-in
+        # Issue #94: only for a product that declares a stand-in server; see ci/stand_in_start.sh.
+        timeout-minutes: 3
+        run: bash ci/stand_in_start.sh
+
+      - name: Journeys - play
+        timeout-minutes: 22
+        env:
+          AUDIT_APPEARANCE: light
+        run: |
+          set +e
+          bash ci/run_journeys.sh 1080
+          true
+
+      - name: Journeys - collect
+        if: always()
+        timeout-minutes: 2
+        run: |
+          set +e
+          A=ci/journey-artifacts; mkdir -p $A/captures
+          cp -R /tmp/journeys/. $A/captures/ 2>/dev/null
+          grep -h "^JOURNEY " $A/logs/*.log > $A/journeys.txt 2>/dev/null
+          echo "TIMING total $(( $(date +%s) - JOB_T0 ))s" | tee -a $A/timing.txt
+          true
+
+      - name: Journeys - upload
+        if: always()
+        timeout-minutes: 2
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-checkpoint-journeys
+          retention-days: 5
+          if-no-files-found: ignore
+          path: |
+            ci/journey-artifacts/**

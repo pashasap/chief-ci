@@ -1,0 +1,78 @@
+{
+ "about": "Invented content for the Kit stand-in server (issue #94). No real person, place, account or token. Shapes follow the Kit API contract, version 5.",
+ "token": "stand-in-token-not-a-secret",
+ "snapshot": {
+  "api": 5,
+  "generated_at": null,
+  "today": null,
+  "timezone": "UTC",
+  "captures": [
+   {"id": "c0101-02", "date": "2026-01-01", "time": "09:12", "source": "app", "client_id": "0f6c1e2a-3b4d-4e5f-8a9b-0c1d2e3f4a5b",
+    "text": "Water the balcony tomatoes tonight, and maybe start a seed swap with the neighbours.",
+    "status": "filed", "status_note": "",
+    "items": [
+     {"handle": "c0101-02-1", "kind": "task", "text": "Water the balcony tomatoes", "state": "open"},
+     {"handle": "c0101-02-2", "kind": "note", "text": "Idea: a seed swap with the neighbours", "state": "open"}
+    ]},
+   {"id": "c0101-01", "date": "2026-01-01", "time": "08:40", "source": "app", "client_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+    "text": "Ask Robin Quill whether the book club can move to Thursday.",
+    "status": "filed", "status_note": "",
+    "items": [
+     {"handle": "P-0101-1", "kind": "proposal", "text": "Move the book club to Thursday evening", "state": "open"}
+    ]}
+  ],
+  "tasks": [
+   {"handle": "c0101-02-1", "rev": "rev-t1", "text": "Water the balcony tomatoes", "note": "", "when": {"kind": "today", "date": null},
+    "state": "open", "capture": "c0101-02", "pick": null},
+   {"handle": "c1231-04-1", "rev": "rev-t2", "text": "Return the library copy of The Lighthouse Atlas", "note": "", "when": {"kind": "later", "date": null},
+    "state": "open", "capture": "c1231-04", "pick": null}
+  ],
+  "notes": [
+   {"handle": "c0101-02-2", "rev": "rev-n1", "text": "Idea: a seed swap with the neighbours", "note": "", "capture": "c0101-02"}
+  ],
+  "waiting": [
+   {"handle": "w0101-1", "rev": "rev-w1", "text": "Robin Quill: a date for the book club", "state": "open", "capture": "c0101-01"}
+  ],
+  "candidates": [
+   {"handle": "pc0101-1", "rev": "rev-k1", "text": "A shared tool library for the street", "note": "1 mention", "capture": "c1231-04", "research": null, "decision": "open"}
+  ],
+  "proposals": [
+   {"handle": "P-0101-1", "rev": "rev-p1", "would": "Move the book club to Thursday evening",
+    "because": "Ask Robin Quill whether the book club can move to Thursday", "capture": "c0101-01", "state": "open", "action": null}
+  ],
+  "questions": [],
+  "results": [
+   {"handle": "A-0101-1", "title": "Opening hours of the Maple Street library", "date": "2026-01-01", "kind": "lookup",
+    "asked": "When is the Maple Street library open on Saturdays?", "answer": "From ten in the morning to four in the afternoon.",
+    "capture": "c1231-04", "has_draft": false}
+  ],
+  "actions": {"queued": 0, "running": 0, "blocked": 0, "failed": 0},
+  "brief": {"date": null, "recorded": true, "lines": ["Morning brief", "", "Today (1)", "• Water the balcony tomatoes"]},
+  "health": {"brief_ran_today": true, "last_result": {"handle": "A-0101-1", "date": "2026-01-01"}, "board_date": "2026-01-01"},
+  "settings": {"brief_time": "07:40", "vocabulary": ["Robin", "Quill"]},
+  "unreadable": []
+ },
+ "docs": {
+  "A-0101-1": {
+   "result": {"title": "Opening hours of the Maple Street library",
+              "markdown": "# Opening hours\n\nSaturday: 10:00 to 16:00. Sunday: closed.\n"}
+  }
+ },
+ "filing": {"id_prefix": "c0102-", "statuses": ["filing", "filed"], "item_kind": "note"},
+ "commands": {
+  "proposal.approve": {"list": "proposals", "set": {"state": "approved"}},
+  "proposal.reject": {"list": "proposals", "set": {"state": "rejected"}},
+  "proposal.change": {"list": "proposals", "set": {"state": "changing"}},
+  "proposal.drop": {"list": "proposals", "remove": true},
+  "question.answer": {"list": "questions", "set": {"state": "answered"}},
+  "task.done": {"list": "tasks", "set": {"state": "done"}},
+  "task.reopen": {"list": "tasks", "set": {"state": "open"}},
+  "task.drop": {"list": "tasks", "set": {"state": "dropped"}},
+  "task.defer": {"list": "tasks", "from_args": {"when": "when"}},
+  "waiting.close": {"list": "waiting", "remove": true},
+  "candidate.drop": {"list": "candidates", "remove": true},
+  "candidate.research": {"list": "candidates", "set": {"research": "A-0102-1"}},
+  "item.remove": {"list": "tasks", "remove": true}
+ },
+ "chat_reply": "This is the stand-in server. It received your message."
+}
