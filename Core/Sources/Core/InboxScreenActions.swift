@@ -29,7 +29,8 @@ extension InboxScreen {
         case .undo: await decisions.undoLastAction()
         case .openChange, .confirmRemove, .cancelRemove, .justAnIdea, .itsATask, .notThis, .sendCorrection,
             .markDone, .reopen, .closeWaiting, .dropTask, .confirmDrop, .cancelDrop, .move, .taskMore,
-            .closeTaskMore, .augmentIdea, .researchIdea, .deleteIdea, .confirmDeleteIdea, .cancelDeleteIdea:
+            .closeTaskMore, .augmentIdea, .researchIdea, .deleteIdea, .confirmDeleteIdea, .cancelDeleteIdea,
+            .pickRemove, .candidateDecide:
             break
         }
     }

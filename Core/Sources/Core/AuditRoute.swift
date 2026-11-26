@@ -8,6 +8,9 @@ public struct AuditDestination: Hashable, Sendable {
     public var showsFocusEditor = false
     public var showsChat = false
     public var showsIdeaControls = false
+    /// The picks audit stops open a segment that always lists marked picks or candidates.
+    public var showsPicks = false
+    public var showsCandidates = false
     public var orbMode: String?
     public var recordingState: String?
     public var textSize: AuditTextSize = .standard
@@ -26,6 +29,7 @@ public enum AuditRoute {
             "chat-exchange": "chat",
             "independent-write": "write", "inbox-universal-tiles": "inbox",
             "tasks-today": "tasks-today", "tasks-later": "tasks-later",
+            "tasks-today-picks": "tasks-today-picks", "tasks-later-candidate": "tasks-later-candidate",
             "tasks-waiting": "tasks-waiting", "tasks-ideas": "tasks-ideas",
             "search-results": "search", "focus-modal": "focus-editor",
             "permission-recovery": "recovery", "recording-meter": "recording",
@@ -55,7 +59,9 @@ public enum AuditRoute {
         switch id {
         case "inbox-universal-tiles": return AuditDestination(tab: .inbox)
         case "tasks-today": return make(.today) { $0.tasksSegment = 0 }
+        case "tasks-today-picks": return make(.today) { $0.tasksSegment = 0; $0.showsPicks = true }
         case "tasks-later": return make(.today) { $0.tasksSegment = 1 }
+        case "tasks-later-candidate": return make(.today) { $0.tasksSegment = 1; $0.showsCandidates = true }
         case "tasks-waiting": return make(.today) { $0.tasksSegment = 2 }
         case "tasks-ideas": return make(.today) { $0.tasksSegment = 3 }
         case "idea-controls": return make(.today) { $0.tasksSegment = 3; $0.showsIdeaControls = true }

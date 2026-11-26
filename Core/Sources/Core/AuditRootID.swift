@@ -8,9 +8,12 @@ public enum AuditRootID {
         return prefix + stopID
     }
 
-    /// The owner name the Tasks tab reports for the current segment; idea-control stops own the tab root.
+    /// The owner name the Tasks tab reports for the current segment; idea-control and picks stops own it.
     public static func tasksOwner(segment: Int, stopID: String?) -> String {
-        if let stopID, AuditRoute.rootOwner(for: stopID) == "idea-controls" { return "idea-controls" }
+        if let stopID, let owner = AuditRoute.rootOwner(for: stopID),
+            ["idea-controls", "tasks-today-picks", "tasks-later-candidate"].contains(owner) {
+            return owner
+        }
         let owners = ["tasks-today", "tasks-later", "tasks-waiting", "tasks-ideas"]
         return owners[min(max(segment, 0), owners.count - 1)]
     }

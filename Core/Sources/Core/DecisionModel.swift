@@ -87,6 +87,8 @@ public final class DecisionModel {
     var dropBar: DoneBarState?
 
     private var states: [String: DecisionState] = [:]
+    /// The type of the last command sent for a handle, so a pick removal hides its row while pending.
+    private var commandTypes: [String: String] = [:]
     /// Kit's line for the last confirmed command, while it is on screen.
     private(set) var confirmation: KitConfirmation?
     @ObservationIgnored private let voice = KitVoiceCounter()
@@ -192,6 +194,22 @@ public final class DecisionModel {
         await send("candidate.research", handle: candidate.handle, rev: candidate.rev, args: [:])
     }
 
+    /// Removes Kit's pick in its horizon. The row leaves at once; the command carries the scope.
+    public func removePick(_ task: TaskItem, scope: PickScope) async {
+        await send("pick.remove", handle: task.handle, rev: task.rev, args: ["scope": .string(scope.rawValue)])
+    }
+
+    /// Decides a candidate project offered in Later: start, keep or drop.
+    public func decide(_ candidate: Candidate, choice: CandidateChoice) async {
+        await send("candidate.decide", handle: candidate.handle, rev: candidate.rev,
+            args: ["decision": .string(choice.rawValue)])
+    }
+
+    /// True while a pick removal is still in flight, so the row stays hidden until it settles.
+    public func isPendingPickRemoval(_ handle: String) -> Bool {
+        states[handle] == .pending && commandTypes[handle] == "pick.remove"
+    }
+
     /// Deletes a candidate project. It is not a learning signal and carries no queued action.
     public func drop(_ candidate: Candidate) async {
         await send("candidate.drop", handle: candidate.handle, rev: candidate.rev, args: [:])
@@ -227,6 +245,7 @@ public final class DecisionModel {
             previousWhens[command.id] = when
         }
         states[command.handle] = .pending
+        commandTypes[command.handle] = command.type
         conflicts.remove(command.handle)
         guard let request = makeRequest(command) else { return notPaired(command) }
         let response: HTTPResponse

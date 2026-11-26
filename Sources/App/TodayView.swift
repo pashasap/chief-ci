@@ -151,10 +151,13 @@ struct TodayView: View {
         let tiles = screen.universalTiles(for: selectedIndex, framingStore: framingStore, deferrals: deferrals)
         if selectedIndex == 0 || selectedIndex == 1 {
             let taskLookup = Dictionary(uniqueKeysWithValues: segment.tasks.map { ($0.handle, $0) })
+            let candidateLookup = Dictionary(uniqueKeysWithValues: segment.candidates.map { ($0.handle, $0) })
             if tiles.isEmpty, let empty = segment.emptyText { Text(empty).foregroundStyle(Theme.secondaryText).wrapping() }
             ForEach(tiles) { tile in
                 if let row = taskLookup[tile.id] {
                     taskRow(row, tile: tile, screen: screen)
+                } else if let candidate = candidateLookup[tile.id] {
+                    candidateTile(candidate, screen: screen)
                 } else {
                     UniversalTaskTileView(tile: tile, callbacks: tileCallbacks(tile, screen: screen))
                 }
@@ -170,16 +173,60 @@ struct TodayView: View {
     private func taskRow(_ row: TodayTaskRow, tile: UniversalTaskTile, screen: TodayScreen) -> some View {
         var callbacks = tileCallbacks(tile, screen: screen)
         callbacks.onTapTitle = { sheetHandle = row.handle }
-        return UniversalTaskTileView(tile: tile, callbacks: callbacks) {
-            // The row keeps its own clamp policy, and the tile's resolved limit wins when
-            // the card is expanded so the whole text shows.
-            Text(row.text)
+        return VStack(alignment: .leading, spacing: 6) {
+            UniversalTaskTileView(tile: tile, callbacks: callbacks) {
+                // The row keeps its own clamp policy, and the tile's resolved limit wins when
+                // the card is expanded so the whole text shows.
+                Text(row.text)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(Theme.text)
+                    .strikethrough(row.isStruck)
+                    .lineLimit(row.textLineLimit)
+                    .lineLimit(tile.resolvedTextLineLimit)
+                    .wrapping()
+            }
+            if let mark = row.pickMark { pickMark(mark) }
+            controlRow(row.controls, screen: screen)
+        }
+    }
+
+    /// Kit's pick mark: the label, the catalog symbol and the token tint, all from Core.
+    private func pickMark(_ mark: PickMark) -> some View {
+        Label {
+            Text(mark.label).font(.caption.weight(.semibold))
+        } icon: {
+            Image(systemName: mark.systemImage).font(.caption)
+        }
+        .foregroundStyle(Theme.color(mark.tint))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(mark.label)
+    }
+
+    /// A candidate offered in Later: Start, Keep and Drop, then Retry after a failure.
+    private func candidateTile(_ tile: TodayCandidateTile, screen: TodayScreen) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(tile.text)
                 .font(.body.weight(.medium))
                 .foregroundStyle(Theme.text)
-                .strikethrough(row.isStruck)
-                .lineLimit(row.textLineLimit)
-                .lineLimit(tile.resolvedTextLineLimit)
+                .lineLimit(tile.textLineLimit)
                 .wrapping()
+            controlRow(tile.controls, screen: screen)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.glassBaseMid.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    @ViewBuilder private func controlRow(_ controls: [InboxControl], screen: TodayScreen) -> some View {
+        if !controls.isEmpty {
+            HStack(spacing: 8) {
+                ForEach(controls, id: \.action) { control in
+                    Button(control.label) { Task { await screen.perform(control) } }
+                        .frame(minWidth: control.minimumWidth, minHeight: control.minimumHeight)
+                        .disabled(!control.isEnabled)
+                        .accessibilityLabel(control.accessibilityLabel)
+                }
+            }
         }
     }
 

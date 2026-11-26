@@ -62,6 +62,22 @@ public final class TodayModel {
         if wasDone { failed.forEach(recordIfDone) }
     }
 
+    // MARK: Picks and candidates
+
+    /// Removes a pick in its horizon; the row leaves at once and comes back only on failure.
+    func removePick(_ handle: String, scope: PickScope) async {
+        guard let task = inbox.snapshot?.tasks.first(where: { $0.handle == handle }), task.pick != nil else { return }
+        decisions.resetState(handle)
+        await decisions.removePick(task, scope: scope)
+    }
+
+    /// Sends one candidate decision; a pending tile allows no second one.
+    func decideCandidate(_ handle: String, choice: CandidateChoice) async {
+        guard let candidate = candidate(handle) else { return }
+        decisions.resetState(handle)
+        await decisions.decide(candidate, choice: choice)
+    }
+
     // MARK: Ideas
 
     /// Opens the augmentation field of a candidate. Nothing is sent until Save.

@@ -2,9 +2,11 @@ import Foundation
 
 /// Core's allow-list for decision and task-control SF Symbols.
 public enum SuggestionIcon: String, Equatable, Sendable {
-    case approve, reject, change, bin, more, research
+    case approve, reject, change, bin, more, research, pick
 
-    public static let allSymbols = ["checkmark", "xmark", "pencil", "trash", "ellipsis", "magnifyingglass"]
+    public static let allSymbols = [
+        "checkmark", "xmark", "pencil", "trash", "ellipsis", "magnifyingglass", "star",
+    ]
 
     public var symbol: String {
         switch self {
@@ -14,6 +16,7 @@ public enum SuggestionIcon: String, Equatable, Sendable {
         case .bin: return Self.allSymbols[3]
         case .more: return Self.allSymbols[4]
         case .research: return Self.allSymbols[5]
+        case .pick: return Self.allSymbols[6]
         }
     }
 
@@ -26,6 +29,7 @@ public enum SuggestionIcon: String, Equatable, Sendable {
         case .dropProposal, .deleteIdea, .confirmDeleteIdea: return .bin
         case .augmentIdea: return .change
         case .researchIdea: return .research
+        case .pickRemove: return .pick
         default: return nil
         }
     }

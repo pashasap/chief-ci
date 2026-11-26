@@ -21,15 +21,51 @@ struct TodayBuilder {
                 TodaySegment(title: $0, count: 0, emptyText: model.inbox.emptyStateText)
             }
         }
-        let tasks = (snapshot?.tasks ?? []).filter(isOpenTask)
-        let now = tasks.filter(isForToday)
-        let later = tasks.filter { !isForToday($0) }
+        let tasks = (snapshot?.tasks ?? []).filter(isOpenTask).filter { !decisions.isPendingPickRemoval($0.handle) }
+        let dated = tasks.filter(isForToday)
+        let picked = tasks.filter { !isForToday($0) && $0.pick == .today }
+        let now = dated + picked
+        let rest = tasks.filter { !isForToday($0) && $0.pick != .today }
+        let later = rest.filter { $0.pick != .later } + rest.filter { $0.pick == .later }
         return [
-            taskSegment("Today", now, empty: Self.emptyToday),
-            taskSegment("Later", later, empty: Self.emptyLater),
+            taskSegment("Today", now, scope: .today, empty: Self.emptyToday),
+            laterSegment(later),
             waitingSegment(),
             ideasSegment(),
         ]
+    }
+
+    private func laterSegment(_ tasks: [TaskItem]) -> TodaySegment {
+        var segment = taskSegment("Later", tasks, scope: .later, empty: Self.emptyLater)
+        segment.candidates = candidateTiles()
+        if !segment.candidates.isEmpty { segment.emptyText = nil }
+        return segment
+    }
+
+    /// A candidate tile leaves Later on confirmation; while pending it allows no second decision.
+    private func candidateTiles() -> [TodayCandidateTile] {
+        (snapshot?.candidates ?? []).filter { $0.decision == .open && isOpenCandidate($0) }
+            .compactMap { item in
+                let state = decisions.state(for: item.handle)
+                guard state != .confirmed else { return nil }
+                return TodayCandidateTile(
+                    handle: item.handle, text: TaskTileText.text(item.text), state: state,
+                    controls: candidateControls(item.handle, state: state))
+            }
+    }
+
+    private func candidateControls(_ handle: String, state: DecisionState?) -> [InboxControl] {
+        if state == .failed { return retryControls(handle) }
+        let free = state == nil
+        return TodayPickStyle.controls().map { entry in
+            control(entry.label, .candidateDecide(entry.choice, handle), enabled: free)
+        }
+    }
+
+    private func isOpenCandidate(_ item: Candidate) -> Bool {
+        let state = decisions.state(for: item.handle)
+        if state == .pending || state == .failed { return true }
+        return item.state == nil || item.state == "open"
     }
 
     func bar() -> TodayBar? { decisions.todayBar }
@@ -43,12 +79,13 @@ struct TodayBuilder {
         return date <= today
     }
 
-    private func taskSegment(_ title: String, _ tasks: [TaskItem], empty: String) -> TodaySegment {
+    private func taskSegment(_ title: String, _ tasks: [TaskItem], scope: PickScope, empty: String) -> TodaySegment {
         TodaySegment(
-            title: title, count: tasks.count, tasks: tasks.map(row), emptyText: tasks.isEmpty ? empty : nil)
+            title: title, count: tasks.count, tasks: tasks.map { row($0, scope: scope) },
+            emptyText: tasks.isEmpty ? empty : nil)
     }
 
-    private func row(_ task: TaskItem) -> TodayTaskRow {
+    private func row(_ task: TaskItem, scope: PickScope) -> TodayTaskRow {
         // A tile shows its text without metadata codes and at most one action line; the codes stay in More.
         let struck = model.isKeptDone(task.handle)
         let state = decisions.state(for: task.handle)
@@ -58,16 +95,31 @@ struct TodayBuilder {
         row.noteLineLimit = row.note == nil ? nil : TaskTileText.summaryLineLimit
         row.isStruck = struck
         row.state = (state == .confirmed && !struck) ? nil : state
-        row.controls = struck ? [] : taskControls(task.handle, state: state)
+        row.pickMark = marked(task, scope: scope) && !struck ? TodayPickStyle.mark(for: scope) : nil
+        row.controls = struck ? [] : taskControls(
+            task.handle, state: state, scope: marked(task, scope: scope) ? scope : nil)
         return row
     }
 
-    private func taskControls(_ handle: String, state: DecisionState?) -> [InboxControl] {
+    /// A dated row carries no mark: the mark belongs to a row a pick put in its horizon.
+    private func marked(_ task: TaskItem, scope: PickScope) -> Bool {
+        guard !isForToday(task) else { return false }
+        return task.pick == (scope == .today ? .today : .later)
+    }
+
+    private func taskControls(_ handle: String, state: DecisionState?, scope: PickScope?) -> [InboxControl] {
         let free = state == nil || state == .confirmed
         let done = control("Mark done", .markDone(handle), enabled: free)
         let more = InboxControl(label: "More", role: .normal, isEnabled: true, state: .idle,
             action: .taskMore(handle), icon: .more, accessibilityLabel: "More")
-        return [done, more] + retryControls(handle)
+        return [done, more] + removeControls(handle, state: state, scope: scope) + retryControls(handle)
+    }
+
+    /// The one remove control a picked row carries, and only while the pick still stands.
+    private func removeControls(_ handle: String, state: DecisionState?, scope: PickScope?) -> [InboxControl] {
+        guard let scope, state != .failed else { return [] }
+        let label = TodayPickStyle.removeLabel(for: scope)
+        return [control(label, .pickRemove(scope, handle), enabled: state == nil)]
     }
 
     private func overdue(_ when: When?) -> Bool {

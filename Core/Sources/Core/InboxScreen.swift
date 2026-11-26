@@ -36,6 +36,9 @@ public enum InboxAction: Equatable, Hashable, Sendable {
     case deleteIdea(String)
     case confirmDeleteIdea(String)
     case cancelDeleteIdea(String)
+    /// Today picks: remove a pick in its scope, and decide a candidate offered in Later.
+    case pickRemove(PickScope, String)
+    case candidateDecide(CandidateChoice, String)
     /// Task sheet: drop with confirmation, and the "Move it" choices.
     case dropTask(String)
     case confirmDrop(String)

@@ -45,6 +45,16 @@ public struct Capture: Codable, Equatable, Sendable {
     }
 }
 
+/// Kit's pick for a task: shown in Today or parked in Later. A missing, null or unknown value is no pick.
+public enum TaskPick: String, Codable, Equatable, Sendable {
+    case today, later
+
+    public init?(lenient value: String?) {
+        guard let value else { return nil }
+        self.init(rawValue: value)
+    }
+}
+
 public struct TaskItem: Codable, Equatable, Sendable {
     public var handle: String
     public var rev: String?
@@ -53,6 +63,26 @@ public struct TaskItem: Codable, Equatable, Sendable {
     public var when: When?
     public var note: String?
     public var capture: String?
+    public var pick: TaskPick?
+
+    enum CodingKeys: String, CodingKey {
+        case handle, rev, text, state, when, note, capture, pick
+    }
+}
+
+extension TaskItem {
+    /// Lenient: a missing key, null or unknown value decodes as no pick.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        handle = try c.decode(String.self, forKey: .handle)
+        rev = try c.decodeIfPresent(String.self, forKey: .rev)
+        text = try c.decode(String.self, forKey: .text)
+        state = try c.decode(String.self, forKey: .state)
+        when = try c.decodeIfPresent(When.self, forKey: .when)
+        note = try c.decodeIfPresent(String.self, forKey: .note)
+        capture = try c.decodeIfPresent(String.self, forKey: .capture)
+        pick = TaskPick(lenient: try c.decodeIfPresent(String.self, forKey: .pick))
+    }
 }
 
 public struct Note: Codable, Equatable, Sendable {
@@ -73,6 +103,19 @@ public struct Waiting: Codable, Equatable, Sendable {
     public var since: String?
 }
 
+/// A candidate's decision; a missing or unknown value is open, so an older snapshot offers it.
+public enum CandidateDecision: String, Codable, Equatable, Sendable {
+    case open, started, kept, dropped
+
+    public init(lenient value: String?) {
+        guard let value, let decision = Self(rawValue: value) else {
+            self = .open
+            return
+        }
+        self = decision
+    }
+}
+
 public struct Candidate: Codable, Equatable, Sendable {
     public var handle: String
     public var rev: String?
@@ -81,10 +124,29 @@ public struct Candidate: Codable, Equatable, Sendable {
     public var note: String?
     /// The action handle of the research already queued for this candidate, when the server identified one.
     public var research: String?
+    public var decision: CandidateDecision
+
+    enum CodingKeys: String, CodingKey {
+        case handle, rev, text, state, note, research, decision
+    }
 
     /// True while the snapshot names a research action; then no second one may be requested.
     public var hasResearch: Bool {
         !(research ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+extension Candidate {
+    /// Lenient: a missing or unknown decision decodes as open.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        handle = try c.decode(String.self, forKey: .handle)
+        rev = try c.decodeIfPresent(String.self, forKey: .rev)
+        text = try c.decode(String.self, forKey: .text)
+        state = try c.decodeIfPresent(String.self, forKey: .state)
+        note = try c.decodeIfPresent(String.self, forKey: .note)
+        research = try c.decodeIfPresent(String.self, forKey: .research)
+        decision = CandidateDecision(lenient: try c.decodeIfPresent(String.self, forKey: .decision))
     }
 }
 

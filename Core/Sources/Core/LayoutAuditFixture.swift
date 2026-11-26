@@ -19,7 +19,7 @@ public final class LayoutAuditFixture: FileStore, Clock, UUIDSource, TokenStore,
         guard let stop = AuditStops.all.first(where: { $0.id == id }) else { return nil }
         self.stop = stop
         switch id {
-        case "xl-today-recording": tab = .today
+        case "xl-today-recording", "tasks-today-picks", "tasks-later-candidate": tab = .today
         case "xl-bottom-bar": tab = .brief
         default: tab = .inbox
         }
@@ -101,10 +101,39 @@ public final class LayoutAuditFixture: FileStore, Clock, UUIDSource, TokenStore,
     }
 
     private var snapshot: Data {
-        let fields = stop.id == "xl-bottom-bar" ? unreadableFields : todayFields
+        let fields: String
+        switch stop.id {
+        case "xl-bottom-bar": fields = unreadableFields
+        case "tasks-today-picks": fields = picksFields
+        case "tasks-later-candidate": fields = candidateFields
+        default: fields = todayFields
+        }
         return Data("""
             {"api":2,"today":"2026-11-17","timezone":"UTC","generated_at":"2026-11-17T12:00:00Z",\(fields)}
             """.utf8)
+    }
+
+    /// Two dated tasks, then two rows Kit picked for today.
+    private var picksFields: String {
+        """
+            "tasks":[
+              {"handle":"pick-dated-first","rev":"r1","text":"Bring the sample kit","state":"open","when":{"kind":"today"}},
+              {"handle":"pick-dated-second","rev":"r1","text":"Check the demo list","state":"open","when":{"kind":"today"}},
+              {"handle":"pick-marked-first","rev":"r1","text":"Plan the Sunday review","state":"open","when":{"kind":"later"},"pick":"today"},
+              {"handle":"pick-marked-second","rev":"r1","text":"Book the supply run","state":"open","when":{"kind":"later"},"pick":"today"}],
+            "waiting":[],
+            "candidates":[]
+            """
+    }
+
+    /// One row Kit parked in Later, then one open candidate with Start, Keep and Drop.
+    private var candidateFields: String {
+        """
+            "tasks":[
+              {"handle":"pick-week","rev":"r1","text":"Sort the sample notes","state":"open","when":{"kind":"later"},"pick":"later"}],
+            "waiting":[],
+            "candidates":[{"handle":"idea-open","rev":"r1","text":"Plan a demo kit","state":"open","decision":"open"}]
+            """
     }
 
     private var todayFields: String {

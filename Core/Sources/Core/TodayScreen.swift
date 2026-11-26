@@ -11,6 +11,8 @@ public struct TodayTaskRow: Equatable, Sendable {
     public var noteLineLimit: Int?
     public var isStruck = false
     public var state: DecisionState?
+    /// Kit's pick mark, on a picked row only.
+    public var pickMark: PickMark?
     public var doneSize: Double = 44
     public var controls: [InboxControl] = []
 }
@@ -52,6 +54,8 @@ public struct TodaySegment: Equatable, Sendable {
     public var isSelected = false
     public var lineLimit: Int? = 1
     public var tasks: [TodayTaskRow] = []
+    /// Open candidates offered as tiles in Later, with Start, Keep and Drop.
+    public var candidates: [TodayCandidateTile] = []
     public var waiting: [TodayWaitingCard] = []
     public var ideas: [TodayIdeaRow] = []
     public var emptyText: String?
@@ -129,8 +133,8 @@ public struct TodayScreen {
         return base.enumerated().map { index, segment in
             let tiles = universalTiles(for: index)
             var updated = segment
-            updated.count = tiles.count
             updated.tasks = rows(taskRows, in: index)
+            updated.count = tiles.count + unmovedCandidates(in: segment)
             if model.inbox.snapshot != nil {
                 updated.emptyText = tiles.isEmpty ? TodayBuilder.emptyText(for: index) : nil
             }
@@ -189,6 +193,8 @@ public struct TodayScreen {
             if model.inbox.snapshot?.tasks.contains(where: { $0.handle == handle }) == true { model.moreHandle = handle }
         case .closeTaskMore: model.moreHandle = nil
         case .augmentIdea, .researchIdea, .deleteIdea, .sendCorrection: await model.ideas.perform(control)
+        case .pickRemove(let scope, let handle): await model.removePick(handle, scope: scope)
+        case .candidateDecide(let choice, let handle): await model.decideCandidate(handle, choice: choice)
         default: break
         }
     }
@@ -224,6 +230,13 @@ public extension TodayScreen {
         guard model.decisions.state(for: tile.id) == .confirmed else { return }
         store.clear(tile.id)
         model.decisions.resetState(tile.id)
+    }
+
+    /// While a move is in flight the corpus lists only the moving tiles; the other candidate tiles still count.
+    private func unmovedCandidates(in segment: TodaySegment) -> Int {
+        let moved = (activeMoves ?? .shared).pendingMoves(decisions: model.decisions)
+        guard !moved.isEmpty else { return 0 }
+        return segment.candidates.filter { moved[$0.handle] == nil }.count
     }
 
     /// Every task row of a credited bucket, with a moved row following its pending destination.

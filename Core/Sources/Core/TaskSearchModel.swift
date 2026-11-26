@@ -8,6 +8,8 @@ struct TileCorpusState: Sendable {
     var failedHandles: Set<String> = []
     var deferredHandles: Set<String> = []
     var keptDoneHandles: Set<String> = []
+    /// Picks whose removal is still in flight: hidden from both horizons and from every count.
+    var hiddenPickHandles: Set<String> = []
     /// Buckets a moved handle is parked in until its command settles.
     var movedBuckets: [String: TileBucket] = [:]
     var canDecide: Bool = true
@@ -160,6 +162,7 @@ public final class TaskSearchModel {
         for handle in handles {
             if deferrals?.isDeferred(handle) == true { state.deferredHandles.insert(handle) }
             if today?.isKeptDone(handle) == true { state.keptDoneHandles.insert(handle) }
+            if decisions?.isPendingPickRemoval(handle) == true { state.hiddenPickHandles.insert(handle) }
             guard let decisionState = decisions?.state(for: handle) else { continue }
             switch decisionState {
             case .pending: state.pendingHandles.insert(handle)
@@ -201,12 +204,15 @@ public final class TaskSearchModel {
         let openTasks = snapshot.tasks.filter {
             state.keptDoneHandles.contains($0.handle)
                 || state.isActionable(handle: $0.handle, isOpenInSnapshot: $0.state == "open")
+        }.filter { !state.hiddenPickHandles.contains($0.handle) }
+        let dated = openTasks.filter { !state.isDeferred($0.handle) && isForToday($0.when, today: todayDate) }
+        let pickedToday = openTasks.filter {
+            !state.isDeferred($0.handle) && !isForToday($0.when, today: todayDate) && $0.pick == .today
         }
-        let todayTasks = openTasks
-            .filter { !state.isDeferred($0.handle) && isForToday($0.when, today: todayDate) }
-            .map { taskTile($0, bucket: .today, todayDate: todayDate, state: state) }
-        let laterTasks = openTasks
-            .filter { state.isDeferred($0.handle) || !isForToday($0.when, today: todayDate) }
+        let todayTasks = (dated + pickedToday).map { taskTile($0, bucket: .today, todayDate: todayDate, state: state) }
+        let rest = openTasks.filter { state.isDeferred($0.handle) || !isForToday($0.when, today: todayDate) }
+            .filter { $0.pick != .today || state.isDeferred($0.handle) }
+        let laterTasks = (rest.filter { $0.pick != .later } + rest.filter { $0.pick == .later })
             .map { taskTile($0, bucket: .later, todayDate: todayDate, state: state) }
         let deferredNonTasks = inbox.filter { $0.bucket == .later }
         let remainingInbox = inbox.filter { $0.bucket == .inbox }
@@ -215,6 +221,22 @@ public final class TaskSearchModel {
         return remainingInbox + todayTasks + deferredNonTasks + laterTasks
             + waiting.filter { $0.bucket == .waiting } + waiting.filter { $0.bucket == .later }
             + ideas.filter { $0.bucket == .ideas } + ideas.filter { $0.bucket == .later }
+            + candidateLaterTiles(snapshot: snapshot, state: state)
+    }
+
+    /// Open candidates are offered as tiles in Later, after its tasks.
+    nonisolated static func candidateLaterTiles(snapshot: Snapshot, state: TileCorpusState) -> [UniversalTaskTile] {
+        snapshot.candidates
+            .filter { $0.decision == .open && state.movedBuckets[$0.handle] == nil }
+            .filter { state.isActionable(handle: $0.handle, isOpenInSnapshot: $0.state == nil || $0.state == "open") }
+            .map { item in
+                var tile = baseTile(id: item.handle, bucket: .later, kind: .candidate, title: item.text)
+                tile.rev = item.rev
+                tile.tagLabel = "Candidate"
+                tile.focusLabel = UniversalTaskTile.extractFocusLabel(from: item.note)
+                tile.metaLine = item.hasResearch ? "Research queued" : (item.note ?? "Open candidate")
+                return applyState(tile, state: state)
+            }
     }
 
     static func inboxTiles(snapshot: Snapshot, context: TileBuildContext) -> [UniversalTaskTile] {
@@ -301,6 +323,7 @@ public final class TaskSearchModel {
 
     nonisolated static func ideaTiles(snapshot: Snapshot, state: TileCorpusState) -> [UniversalTaskTile] {
         snapshot.candidates
+            .filter { $0.decision == .open }
             .filter { state.isActionable(handle: $0.handle, isOpenInSnapshot: $0.state == nil || $0.state == "open") }
             .map { item in
                 let deferred = state.isDeferred(item.handle)
