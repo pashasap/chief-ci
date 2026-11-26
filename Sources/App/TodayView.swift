@@ -195,6 +195,9 @@ struct TodayView: View {
             onRate: { signal, rated in
                 framingStore.record(signal, for: rated.id, snippet: rated.title)
             },
+            onMove: { target in
+                Task { await screen.performTileMove(target, on: tile) }
+            },
             onToggleExpansion: { expansion.toggle(tile.id) }
         )
     }

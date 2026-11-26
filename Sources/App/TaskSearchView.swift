@@ -117,6 +117,9 @@ struct TaskSearchView: View {
             onRate: { signal, rated in
                 framingStore.record(signal, for: rated.id, snippet: rated.title)
             },
+            onMove: { target in
+                Task { await searchModel.performMove(target, on: tile) }
+            },
             onToggleExpansion: { searchModel.toggleExpansion(tile.id) }
         )
     }

@@ -40,7 +40,8 @@ struct BottomBarView: View {
     }
 
     @ViewBuilder
-    private func dockRow(_ items: [BottomBarItem]) -> some View {
+    private func dockRow(_ rows: [BottomBarItem]) -> some View {
+        let items = routerOrdered(rows)
         if screen.usesEqualWidthColumns {
             HStack(alignment: .center, spacing: 0) {
                 ForEach(items, id: \.kind) { item in
@@ -139,6 +140,27 @@ struct BottomBarView: View {
         case .tasks: return selected == .today
         case .settings: return selected == .settings
         case .record, .write: return false
+        }
+    }
+
+    /// The dock shows the tabs in the order `AppRouter.tabs` declares, so the router stays the
+    /// single source of which tabs exist and where they sit. The raised Record slot keeps its place.
+    private func routerOrdered(_ items: [BottomBarItem]) -> [BottomBarItem] {
+        let ranked = items.filter { tabRank($0.kind) != nil }
+            .sorted { (tabRank($0.kind) ?? 0) < (tabRank($1.kind) ?? 0) }
+        var next = ranked.makeIterator()
+        return items.map { item in
+            tabRank(item.kind) == nil ? item : (next.next() ?? item)
+        }
+    }
+
+    private func tabRank(_ kind: BottomBarKind) -> Int? {
+        switch kind {
+        case .home: return AppRouter.tabs.firstIndex(of: .home)
+        case .inbox: return AppRouter.tabs.firstIndex(of: .inbox)
+        case .tasks: return AppRouter.tabs.firstIndex(of: .today)
+        case .settings: return AppRouter.tabs.firstIndex(of: .settings)
+        case .record, .write: return nil
         }
     }
 }

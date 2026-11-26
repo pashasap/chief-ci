@@ -6,6 +6,7 @@ struct TileViewCallbacks {
     var onAction: (TileActionKind) -> Void
     var onEdit: (UniversalTaskTile) -> Void
     var onRate: (FramingSignal, UniversalTaskTile) -> Void
+    var onMove: ((TileMoveTarget) -> Void)? = nil
     var onTapTitle: (() -> Void)? = nil
     var onToggleExpansion: (() -> Void)? = nil
 }
@@ -61,6 +62,7 @@ struct UniversalTaskTileView<TitleContent: View>: View {
             pillBadge
             Spacer(minLength: 4)
             metaView
+            if !tile.moveOptions.isEmpty { moveMenu }
             moreMenu
         }
     }
@@ -94,6 +96,25 @@ struct UniversalTaskTileView<TitleContent: View>: View {
                 .lineLimit(2)
                 .multilineTextAlignment(.trailing)
         }
+    }
+
+    /// The one Move control: its items are the tile's move option labels.
+    private var moveMenu: some View {
+        Menu {
+            ForEach(Array(tile.moveOptions.enumerated()), id: \.offset) { _, option in
+                Button(option.label) { callbacks.onMove?(option.target) }
+                    .accessibilityLabel(option.accessibilityLabel)
+            }
+        } label: {
+            Image(systemName: SuggestionIcon.more.symbol)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.accent)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel("Move")
+        .disabled(!tile.isEnabled || tile.isPending)
+        .accessibilityHint(tile.moveDisabledReason ?? "")
     }
 
     private var moreMenu: some View {

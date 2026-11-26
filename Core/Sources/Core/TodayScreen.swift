@@ -81,6 +81,7 @@ public struct TodayScreen {
     private var expansion = TaskExpansionModel()
     public private(set) var scalableText = true
     public private(set) var wrapsWholeWords = true
+    private var activeMoves: TileMoveStore?
     public var headerLineLimit: Int? { nil }
     /// Segments sit in one row by default and stack at Accessibility XL.
     public var segmentLayout: TodaySegmentLayout { layout?.largestText == true ? .stacked : .row }
@@ -96,12 +97,14 @@ public struct TodayScreen {
     public func presented(
         in layout: RecordingPanelLayout,
         focus: String? = nil,
-        deferrals: TileDeferralStore? = nil
+        deferrals: TileDeferralStore? = nil,
+        moves: TileMoveStore? = nil
     ) -> TodayScreen {
         var copy = self
         copy.layout = layout
         copy.activeFocus = focus
         copy.activeDeferrals = deferrals
+        copy.activeMoves = moves
         copy.scalableText = true
         copy.wrapsWholeWords = true
         return copy
@@ -119,10 +122,15 @@ public struct TodayScreen {
 
     public var segments: [TodaySegment] {
         let largest = layout?.largestText == true
-        return TodayBuilder(model: model).segments().enumerated().map { index, segment in
+        let base = TodayBuilder(model: model).segments()
+        let taskRows = base.enumerated().flatMap { index, segment in
+            segment.tasks.map { (row: $0, bucket: Self.bucket(for: index)) }
+        }
+        return base.enumerated().map { index, segment in
             let tiles = universalTiles(for: index)
             var updated = segment
             updated.count = tiles.count
+            updated.tasks = rows(taskRows, in: index)
             if model.inbox.snapshot != nil {
                 updated.emptyText = tiles.isEmpty ? TodayBuilder.emptyText(for: index) : nil
             }
@@ -190,18 +198,42 @@ public extension TodayScreen {
     func universalTiles(
         for segmentIndex: Int,
         framingStore: FramingSignalStore? = nil,
-        deferrals: TileDeferralStore? = nil
+        deferrals: TileDeferralStore? = nil,
+        moves: TileMoveStore? = nil
     ) -> [UniversalTaskTile] {
         guard let bucket = Self.bucket(for: segmentIndex) else { return [] }
         let limit: Int? = layout?.largestText == true ? nil : 3
         let resolvedDeferrals = deferrals ?? activeDeferrals
-        let context = TileBuildContext(
+        var context = TileBuildContext(
             inbox: model.inbox, decisions: model.decisions, framingStore: framingStore, deferrals: resolvedDeferrals
         ).withLineLimit(limit)
+        context.moves = moves ?? activeMoves ?? .shared
         let tiles = TaskSearchModel.corpusTiles(context: context, today: model).filter {
             $0.bucket == bucket && TaskSearchModel.matchesFocus(activeFocus, tile: $0)
         }
         return TileExpansion.tiles(tiles, expandedIDs: expansion.expandedIDs)
+    }
+
+    /// Sends the move's one command; the tile waits in its destination while it is pending.
+    func performTileMove(_ target: TileMoveTarget, on tile: UniversalTaskTile) async {
+        let store = activeMoves ?? .shared
+        var context = TileBuildContext(inbox: model.inbox, decisions: model.decisions, deferrals: activeDeferrals)
+        context.moves = store
+        let today = model.inbox.snapshot?.today ?? ""
+        await UniversalTaskTile.executeMove(target, on: tile, context: context, today: today)
+        guard model.decisions.state(for: tile.id) == .confirmed else { return }
+        store.clear(tile.id)
+        model.decisions.resetState(tile.id)
+    }
+
+    /// Every task row of a credited bucket, with a moved row following its pending destination.
+    private func rows(
+        _ taskRows: [(row: TodayTaskRow, bucket: TileBucket?)], in index: Int
+    ) -> [TodayTaskRow] {
+        guard let bucket = Self.bucket(for: index) else { return [] }
+        return taskRows.filter { entry in
+            (activeMoves?.bucket(for: entry.row.handle) ?? entry.bucket) == bucket
+        }.map(\.row)
     }
 
     /// Keeps the expansion state outside the screen value, so a rebuilt screen still honours it.

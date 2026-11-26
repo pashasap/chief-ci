@@ -99,6 +99,8 @@ public struct UniversalTaskTile: Equatable, Identifiable, Sendable {
     public var detailsText: String?
     /// True while the tile shows all of its text; it keeps the clamped preview otherwise.
     public var isExpanded = false
+    /// True when the underlying task carries a horizon; an idea tile never does.
+    public var horizonIsSet = false
 
     public static let swipeRightAction: TileActionKind = .approve
     public static let swipeLeftAction: TileActionKind = .reject
@@ -210,6 +212,8 @@ public struct TileBuildContext {
     public let decisions: DecisionModel
     public let framingStore: FramingSignalStore?
     public let deferrals: TileDeferralStore?
+    /// The pending moves, set after the init so the shared init keeps its four parameters.
+    public var moves: TileMoveStore?
     public var textLineLimit: Int?
 
     public init(inbox: InboxModel, decisions: DecisionModel, framingStore: FramingSignalStore? = nil, deferrals: TileDeferralStore? = nil) {

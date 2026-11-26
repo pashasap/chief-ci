@@ -198,22 +198,47 @@ public struct BottomBarScreen {
     }
 
     public init(inboxCount: Int = 0, availability: RecordAvailability = RecordAvailability()) {
+        items = [
+            .tab(.home, "Home"),
+            Self.inboxTab(inboxCount),
+            Self.recordButton(availability),
+            .tab(.tasks, "Tasks"),
+            .tab(.settings, "Settings"),
+        ]
+    }
+
+    /// Badges all four tabs from the Core counts; the Inbox wording stays as it always was.
+    public init(counts: TabCounts, availability: RecordAvailability = RecordAvailability()) {
+        items = [
+            Self.countedTab(.home, "Home", count: counts.home),
+            Self.inboxTab(counts.inbox),
+            Self.recordButton(availability),
+            Self.countedTab(.tasks, "Tasks", count: counts.tasks),
+            Self.countedTab(.settings, "Settings", count: counts.settings),
+        ]
+    }
+
+    private static func countedTab(_ kind: BottomBarKind, _ label: String, count: Int) -> BottomBarItem {
+        var item = BottomBarItem.tab(kind, label)
+        item.badge = count > 0 ? String(count) : nil
+        item.accessibilityLabel = "\(label), \(count)"
+        return item
+    }
+
+    private static func inboxTab(_ count: Int) -> BottomBarItem {
         var inbox = BottomBarItem.tab(.inbox, "Inbox")
-        if inboxCount > 0 {
-            inbox.badge = String(inboxCount)
-            inbox.accessibilityLabel = "Inbox, \(inboxCount)" + (inboxCount == 1 ? " needs you" : " need you")
-        }
+        guard count > 0 else { return inbox }
+        inbox.badge = String(count)
+        inbox.accessibilityLabel = "Inbox, \(count)" + (count == 1 ? " needs you" : " need you")
+        return inbox
+    }
+
+    private static func recordButton(_ availability: RecordAvailability) -> BottomBarItem {
         var record = BottomBarItem(
             kind: .record, label: "Record", role: .destructive, size: DesignTokens.orbDiameter,
             raised: true, accessibilityLabel: availability.accessibilityLabel)
         record.isEnabled = availability.isEnabled
         record.tint = availability.tint
-        items = [
-            .tab(.home, "Home"),
-            inbox,
-            record,
-            .tab(.tasks, "Tasks"),
-            .tab(.settings, "Settings"),
-        ]
+        return record
     }
 }

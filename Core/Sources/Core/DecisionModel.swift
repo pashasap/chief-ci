@@ -76,7 +76,9 @@ public final class DecisionModel {
     public static let undoWindow: TimeInterval = 5
     public static let offlineReason = "No connection. Decisions need one."
     /// Commands whose every failure keeps a Retry and shows the server's message, except 401 and 409.
-    static let retryableFailureTypes: Set<String> = ["proposal.drop", "candidate.research", "candidate.drop"]
+    static let retryableFailureTypes: Set<String> = [
+        "proposal.drop", "candidate.research", "candidate.drop", "task.defer",
+    ]
 
     public private(set) var message: String?
 
@@ -246,9 +248,14 @@ public final class DecisionModel {
         }
     }
 
-    /// An Ideas command, or a correction of a candidate project, keeps its Retry and the server's message.
+    /// An Ideas command, a move to a task or an idea, or a correction of a candidate project, keeps its
+    /// Retry and the server's message.
     private func isIdeaCommand(_ command: Command) -> Bool {
         if Self.retryableFailureTypes.contains(command.type) { return true }
+        if command.type == "item.reclassify" {
+            guard case .string(let destination)? = command.args["to"] else { return false }
+            return destination == "task" || destination == "idea"
+        }
         guard command.type == "item.correct" else { return false }
         return inbox.snapshot?.candidates.contains { $0.handle == command.handle } == true
     }

@@ -165,8 +165,10 @@ struct RootView: View {
 
     private func bottomBar(_ layout: RecordingPanelLayout) -> some View {
         let availability = environment.recording.recordAvailability
-        let screen = BottomBarScreen(inboxCount: environment.inbox.needsYouCount,
-            availability: availability).presented(in: layout)
+        let counts = TabCounts.from(
+            inbox: environment.inbox, decisions: environment.decisions,
+            deferrals: nil, moves: nil, today: environment.today)
+        let screen = BottomBarScreen(counts: counts, availability: availability).presented(in: layout)
         return BottomBarView(screen: screen, selected: environment.coordinator.selectedTab, select: select)
             .overlay(alignment: .top) {
                 CaptureOrbView(model: orbModel, availability: availability, onStartVoice: present)

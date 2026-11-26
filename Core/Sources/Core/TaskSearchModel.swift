@@ -8,6 +8,8 @@ struct TileCorpusState: Sendable {
     var failedHandles: Set<String> = []
     var deferredHandles: Set<String> = []
     var keptDoneHandles: Set<String> = []
+    /// Buckets a moved handle is parked in until its command settles.
+    var movedBuckets: [String: TileBucket] = [:]
     var canDecide: Bool = true
     var cannotDecideReason: String? = nil
     var textLineLimit: Int? = 3
@@ -34,6 +36,7 @@ public final class TaskSearchModel {
     private let today: TodayModel?
     private let framingStore: FramingSignalStore?
     private let deferrals: TileDeferralStore
+    private let moves = TileMoveStore()
     /// Which tiles show their whole text; a new search model starts collapsed.
     private let expansion = TaskExpansionModel()
 
@@ -51,7 +54,9 @@ public final class TaskSearchModel {
     }
 
     public var context: TileBuildContext {
-        TileBuildContext(inbox: inbox, decisions: decisions, framingStore: framingStore, deferrals: deferrals)
+        var context = TileBuildContext(inbox: inbox, decisions: decisions, framingStore: framingStore, deferrals: deferrals)
+        context.moves = moves
+        return context
     }
 
     public var allTiles: [UniversalTaskTile] {
@@ -85,6 +90,19 @@ public final class TaskSearchModel {
         if action == .deferItem, decisions.state(for: tile.id) == .confirmed {
             decisions.resetState(tile.id)
         }
+    }
+
+    public func performMove(_ target: TileMoveTarget, on tile: UniversalTaskTile) async {
+        let today = inbox.snapshot?.today ?? ""
+        await UniversalTaskTile.executeMove(target, on: tile, context: context, today: today)
+        settleMove(tile.id)
+    }
+
+    /// After the command returns, a confirmed move leaves the snapshot in charge of the tile.
+    public func settleMove(_ handle: String) {
+        guard decisions.state(for: handle) == .confirmed else { return }
+        moves.clear(handle)
+        decisions.resetState(handle)
     }
 
     public func submitChange(handle: String, sourceKind: TileSourceKind, text: String) async {
@@ -121,8 +139,9 @@ public final class TaskSearchModel {
     // MARK: Shared Corpus Builders
 
     static func corpusState(from context: TileBuildContext, today: TodayModel? = nil) -> TileCorpusState {
-        corpusState(snapshot: context.inbox.snapshot, decisions: context.decisions, deferrals: context.deferrals, today: today)
-            .withLineLimit(context.textLineLimit)
+        var state = corpusState(snapshot: context.inbox.snapshot, decisions: context.decisions, deferrals: context.deferrals, today: today)
+        state.movedBuckets = context.moves?.pendingMoves(decisions: context.decisions) ?? [:]
+        return state.withLineLimit(context.textLineLimit)
     }
 
     static func corpusState(
@@ -163,6 +182,17 @@ public final class TaskSearchModel {
     }
 
     nonisolated static func corpusTiles(
+        snapshot: Snapshot,
+        state: TileCorpusState = TileCorpusState()
+    ) -> [UniversalTaskTile] {
+        let corpus = corpusRows(snapshot: snapshot, state: state)
+        // A move in flight is the only truthful destination until the server answers.
+        guard !state.movedBuckets.isEmpty else { return corpus }
+        return corpus.filter { state.movedBuckets[$0.id] != nil }
+    }
+
+    /// Every corpus row, each already parked in the bucket a pending move names: no row is dropped.
+    nonisolated static func corpusRows(
         snapshot: Snapshot,
         state: TileCorpusState = TileCorpusState()
     ) -> [UniversalTaskTile] {
@@ -242,10 +272,11 @@ public final class TaskSearchModel {
         state: TileCorpusState
     ) -> UniversalTaskTile {
         let deferred = state.isDeferred(task.handle)
-        let resolvedBucket: TileBucket = deferred ? .later : bucket
+        let resolvedBucket: TileBucket = state.movedBuckets[task.handle] ?? (deferred ? .later : bucket)
         var tile = baseTile(id: task.handle, bucket: resolvedBucket, kind: .task, title: TaskTileText.text(task.text))
         tile.rev = task.rev
         tile.tagLabel = resolvedBucket == .today ? "Today" : "Later"
+        tile.horizonIsSet = task.when != nil
         tile.focusLabel = UniversalTaskTile.extractFocusLabel(from: task.note)
         let summary = TaskTileText.actionSummary(task.note)
         tile.metaLine = deferred ? "Deferred to Later" : (summary ?? taskPill(task.when))
@@ -273,7 +304,9 @@ public final class TaskSearchModel {
             .filter { state.isActionable(handle: $0.handle, isOpenInSnapshot: $0.state == nil || $0.state == "open") }
             .map { item in
                 let deferred = state.isDeferred(item.handle)
-                var tile = baseTile(id: item.handle, bucket: deferred ? .later : .ideas, kind: .candidate, title: item.text)
+                var tile = baseTile(
+                    id: item.handle, bucket: state.movedBuckets[item.handle] ?? (deferred ? .later : .ideas),
+                    kind: .candidate, title: item.text)
                 tile.rev = item.rev
                 tile.tagLabel = "Idea"
                 tile.focusLabel = UniversalTaskTile.extractFocusLabel(from: item.note)
