@@ -21,6 +21,10 @@ import XCTest
 /// Relaunch (issue #89): `relaunch` ends the app and starts it again without reinstalling it, so its container, and
 /// with it what the app saved, is kept; `launch` with `fresh: true` starts from the install the runner made after
 /// uninstalling the app, so a fresh journey never sees what an earlier journey saved.
+///
+/// Scroll (issue #94): `scroll_to` drags the screen toward its target, at most six times, until the target can be
+/// tapped, the way a user scrolls to a control that is below the fold or under the keyboard. It fails when the
+/// target is not on the screen's tree at all or is still out of reach after six drags.
 final class JourneyPlayerUITests: XCTestCase {
     private var relaunched: [String: Bool]?
     private var eventMark = 0
@@ -118,6 +122,17 @@ final class JourneyPlayerUITests: XCTestCase {
         case "expect_event":
             guard let event = step["event"] as? String else { return ("not supported", "the step names no event") }
             return expectEvent(event, containing: step["contains"] as? String, timeout: timeout)
+        case "scroll_to":
+            guard let query = query(step, app: app) else { return ("not supported", "the step names no target") }
+            guard query.waitForExistence(timeout: timeout) else { return ("fail", notFound(step, timeout)) }
+            var drags = 0
+            while !query.isHittable && drags < 6 {
+                if query.frame.midY > app.frame.midY { app.swipeUp() } else { app.swipeDown() }
+                usleep(600_000)
+                drags += 1
+            }
+            return query.isHittable
+                ? ("pass", "") : ("fail", "\(describe(step)) was still out of reach after \(drags) drags")
         default:
             return ("not supported", "the player does not support `\(verb)`")
         }
