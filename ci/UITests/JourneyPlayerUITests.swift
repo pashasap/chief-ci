@@ -23,8 +23,9 @@ import XCTest
 /// uninstalling the app, so a fresh journey never sees what an earlier journey saved.
 ///
 /// Scroll (issue #94): `scroll_to` drags the screen toward its target, at most six times, until the target can be
-/// tapped, the way a user scrolls to a control that is below the fold or under the keyboard. It fails when the
-/// target is not on the screen's tree at all or is still out of reach after six drags.
+/// tapped, the way a user scrolls to a control that is below the fold or under the keyboard. When a drag moves
+/// nothing it drags the other way next, as a user does who pulls the page down to close the keyboard. It fails when
+/// the target is not on the screen's tree at all or is still out of reach after six drags.
 final class JourneyPlayerUITests: XCTestCase {
     private var relaunched: [String: Bool]?
     private var eventMark = 0
@@ -126,10 +127,13 @@ final class JourneyPlayerUITests: XCTestCase {
             guard let query = query(step, app: app) else { return ("not supported", "the step names no target") }
             guard query.waitForExistence(timeout: timeout) else { return ("fail", notFound(step, timeout)) }
             var drags = 0
+            var towards = query.frame.midY > app.frame.midY
             while !query.isHittable && drags < 6 {
-                if query.frame.midY > app.frame.midY { app.swipeUp() } else { app.swipeDown() }
+                let before = query.frame
+                if towards { app.swipeUp() } else { app.swipeDown() }
                 usleep(600_000)
                 drags += 1
+                if query.frame == before { towards.toggle() }
             }
             return query.isHittable
                 ? ("pass", "") : ("fail", "\(describe(step)) was still out of reach after \(drags) drags")
