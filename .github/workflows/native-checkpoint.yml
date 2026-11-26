@@ -156,8 +156,9 @@ jobs:
           echo "TIMING build done at $(( $(date +%s) - JOB_T0 ))s" | tee -a $A/timing.txt
 
       - name: Journeys - stand-in
-        # Issue #94: only for a product that declares a stand-in server; see ci/stand_in_start.sh.
-        timeout-minutes: 3
+        # Issue #94: only for a product that declares a stand-in server; see ci/stand_in_start.sh. The simulator boots
+        # here (about three minutes on a free runner) instead of in the play step.
+        timeout-minutes: 8
         run: bash ci/stand_in_start.sh
 
       - name: Journeys - play

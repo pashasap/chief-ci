@@ -14,11 +14,15 @@ if ! bash ci/stand_in_cert.sh "$D" > "$A/cert.log" 2>&1; then
   echo "OUTCOME stand-in certificates could not be made" | tee -a ci/journey-artifacts/outcome.txt; exit 1
 fi
 cp "$D/ca.crt" "$A/ca.crt"
+mark () { echo "TIMING stand-in $1 at $(( $(date +%s) - JOB_T0 ))s" | tee -a ci/journey-artifacts/timing.txt; }
+mark "certificates made"
 xcrun simctl boot "$SIM_UDID" > /dev/null 2>&1 < /dev/null || true
 xcrun simctl bootstatus "$SIM_UDID" -b > /dev/null < /dev/null
+mark "simulator booted"
 if ! xcrun simctl keychain "$SIM_UDID" add-root-cert "$D/ca.crt" > "$A/trust.log" 2>&1 < /dev/null; then
   echo "OUTCOME the simulator did not accept the stand-in CA" | tee -a ci/journey-artifacts/outcome.txt; exit 1
 fi
+mark "CA trusted"
 nohup python3 ci/stand_in.py --data ci/stand_in.json --cert "$D/server.crt" --key "$D/server.key" \
   --log "$A/requests.jsonl" --port "$PORT" > "$A/server.log" 2>&1 < /dev/null &
 echo "$!" > "$D/pid"
