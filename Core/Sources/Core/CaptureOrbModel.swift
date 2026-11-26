@@ -50,12 +50,14 @@ public enum OrbRadialOption: String, CaseIterable, Equatable, Sendable {
     case keyboard
     case attachment
     case voice
+    case chat
 
     public var systemImage: String {
         switch self {
         case .keyboard: return "keyboard"
         case .attachment: return "plus"
         case .voice: return "mic"
+        case .chat: return "bubble.left.and.bubble.right"
         }
     }
 
@@ -64,6 +66,7 @@ public enum OrbRadialOption: String, CaseIterable, Equatable, Sendable {
         case .keyboard: return "Keyboard Composer"
         case .attachment: return "Add Attachment + Note"
         case .voice: return "Voice Capture"
+        case .chat: return "Quick Chat"
         }
     }
 
@@ -72,6 +75,7 @@ public enum OrbRadialOption: String, CaseIterable, Equatable, Sendable {
         case .keyboard: return DesignTokens.glowCyan
         case .attachment: return DesignTokens.emeraldApprove
         case .voice: return DesignTokens.indigoAccent
+        case .chat: return DesignTokens.glowPurple
         }
     }
 }
@@ -82,6 +86,7 @@ public enum CaptureOrbMode: Equatable, Sendable {
     case recording
     case attachmentPicker
     case keyboardComposer(CaptureComposerContext)
+    case chat
 }
 
 @MainActor
@@ -106,7 +111,7 @@ public final class CaptureOrbModel {
 
     public func longPressOrb() {
         lastFallbackNotice = nil
-        radialOptions = [.keyboard, .attachment, .voice]
+        radialOptions = [.keyboard, .attachment, .voice, .chat]
         mode = .radialOpen
     }
 
@@ -121,6 +126,9 @@ public final class CaptureOrbModel {
             mode = .attachmentPicker
         case .voice:
             tapOrb(availability: availability)
+        case .chat:
+            lastFallbackNotice = nil
+            mode = .chat
         }
     }
 

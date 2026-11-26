@@ -89,6 +89,11 @@ final class AppEnvironment {
         ResultSheetModel(handle: handle, inbox: inbox, transport: transport, pairing: pairing)
     }
 
+    /// A fresh in-memory Quick Chat session; nothing is written to disk.
+    func makeChatSession() -> ChatSessionModel {
+        ChatSessionModel(transport: transport, pairing: pairing)
+    }
+
     private static func makeNotifications(audit: LayoutAuditFixture?, coordinator: AppCoordinator) -> any NotificationCenterPort {
         if let audit { return audit }
         return SystemNotifications { identifier in coordinator.open(notificationIdentifier: identifier) }

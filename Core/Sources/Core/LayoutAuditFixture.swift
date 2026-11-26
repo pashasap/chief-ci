@@ -86,8 +86,18 @@ public final class LayoutAuditFixture: FileStore, Clock, UUIDSource, TokenStore,
         switch (request.method, request.url.path) {
         case ("GET", "/v1/health"): HTTPResponse(status: 200, body: Data(#"{"ok":true}"#.utf8))
         case ("GET", "/v1/snapshot"): HTTPResponse(status: 200, body: snapshot)
+        case ("POST", "/v1/chat"): HTTPResponse(status: 200, body: Data(#"{"reply":"Paris."}"#.utf8))
         default: HTTPResponse(status: 503)
         }
+    }
+
+    /// Opens a Quick Chat over this fixture's fixed fake transport and asks the audit question once.
+    @MainActor
+    public func chatSession() async -> ChatSessionModel {
+        let session = ChatSessionModel(transport: self, pairing: Pairing(tokenStore: self, settings: self))
+        session.open()
+        await session.send(text: ChatSheetScreen.seedQuestion)
+        return session
     }
 
     private var snapshot: Data {

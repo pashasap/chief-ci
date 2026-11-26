@@ -10,7 +10,7 @@ public struct AuditStop: Sendable {
 public enum AuditStops {
     public static let all: [AuditStop] = [
         AuditStop(id: "home-bento", root: "kit.audit.home-bento", title: "Home Bento Liquid Glass", expectation: "Home shows the Liquid Glass Rook, borderless live date typography, Needs Attention, Daily Briefing with Play icon, Focus rings, and 2x2 Today/Later/Waiting/Ideas grid.", flows: ["F-07"], defects: []),
-        AuditStop(id: "home-radial-orb", root: "kit.audit.home-radial-orb", title: "Orb Long-Press 3-Way Radial", expectation: "Center orb long-press fans out three clean icon-only circles (Keyboard, Attachment, Voice) with zero text pills behind them.", flows: ["F-03", "F-05"], defects: []),
+        AuditStop(id: "home-radial-orb", root: "kit.audit.home-radial-orb", title: "Orb Long-Press 4-Way Radial", expectation: "Center orb long-press fans out four clean icon-only circles (Keyboard, Attachment, Voice, Quick Chat) with zero text pills behind them.", flows: ["F-03", "F-05"], defects: []),
         AuditStop(id: "keyboard-composer", root: "kit.audit.keyboard-composer", title: "Dynamic 1-5 Line Keyboard Composer", expectation: "Dynamic composer sits cleanly within horizontal margins above the dock with optional attachment chip, Discard, and Send to Kit.", flows: ["F-05"], defects: []),
         AuditStop(id: "inbox-universal-tiles", root: "kit.audit.inbox-universal-tiles", title: "Inbox Universal Task Tiles", expectation: "Inbox renders UniversalTaskTileView cards with Approve, Reject, Delete, Defer, swipe actions, and context framing menu.", flows: ["F-07", "F-08"], defects: []),
         AuditStop(id: "tasks-today", root: "kit.audit.tasks-today", title: "Tasks Tab Today Segment", expectation: "Tasks tab on the Today segment lists today's task tiles under the dated Today header.", flows: ["F-07"], defects: []),
@@ -27,5 +27,6 @@ public enum AuditStops {
         AuditStop(id: "independent-write", root: "kit.audit.independent-write", title: "Independent Write", expectation: "The sample draft is already in What is on your mind, with Send, Cancel, Record instead and Discard draft available in the editor.", flows: ["F-05"], defects: []),
         AuditStop(id: "permission-recovery", root: "kit.audit.permission-recovery", title: "Microphone permission recovery", expectation: "Microphone not allowed is visible with a Write control and no recording in progress.", flows: ["F-03", "F-05"], defects: []),
         AuditStop(id: "recording-meter", root: "kit.audit.recording-meter", title: "Live recording meter", expectation: "The recording panel shows a timer and sampled waveform or live meter above controls for Stop, Discard and Type instead.", flows: ["F-03"], defects: []),
+        AuditStop(id: "chat-exchange", root: "kit.audit.chat", title: "Quick Chat exchange", expectation: "Quick Chat shows the question What is the capital of France? and the reply Paris. above a message field, a Send button and a Close button.", flows: ["F-03"], defects: []),
     ]
 }

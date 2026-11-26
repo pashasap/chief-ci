@@ -57,6 +57,7 @@ struct OrbRadialMenuView: View {
         case .keyboard: return CGSize(width: -84, height: -68)
         case .attachment: return CGSize(width: 0, height: -104)
         case .voice: return CGSize(width: 84, height: -68)
+        case .chat: return CGSize(width: 0, height: -160)
         }
     }
 

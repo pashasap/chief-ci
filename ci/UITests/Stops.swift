@@ -17,6 +17,7 @@ let auditStops: [(id: String, root: String)] = [
     (id: "independent-write", root: "kit.audit.independent-write"),
     (id: "permission-recovery", root: "kit.audit.permission-recovery"),
     (id: "recording-meter", root: "kit.audit.recording-meter"),
+    (id: "chat-exchange", root: "kit.audit.chat"),
 ]
 
 extension AuditStopsUITests {
@@ -38,4 +39,5 @@ extension AuditStopsUITests {
     @MainActor func test_016_independent_write() { visit("independent-write", root: "kit.audit.independent-write") }
     @MainActor func test_017_permission_recovery() { visit("permission-recovery", root: "kit.audit.permission-recovery") }
     @MainActor func test_018_recording_meter() { visit("recording-meter", root: "kit.audit.recording-meter") }
+    @MainActor func test_019_chat_exchange() { visit("chat-exchange", root: "kit.audit.chat") }
 }

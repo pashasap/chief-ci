@@ -153,6 +153,9 @@ struct RootView: View {
                 }
             )
             .auditRoot(environment.auditRootID("composer"))
+        case .chat:
+            ChatSheetView(environment: environment, onClose: { orbModel.dismiss() })
+                .auditRoot(environment.auditRootID("chat"))
         case .idle, .radialOpen, .recording:
             EmptyView()
         }
@@ -189,6 +192,7 @@ struct RootView: View {
             orbModel.chooseRadial(.keyboard, availability: environment.recording.recordAvailability)
         default: break
         }
+        if destination.showsChat { orbModel.chooseRadial(.chat, availability: environment.recording.recordAvailability) }
         auditFocusEditor = destination.showsFocusEditor
     }
 

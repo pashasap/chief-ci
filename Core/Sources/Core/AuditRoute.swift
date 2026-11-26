@@ -6,6 +6,7 @@ public struct AuditDestination: Hashable, Sendable {
     public var tasksSegment: Int?
     public var showsSearch = false
     public var showsFocusEditor = false
+    public var showsChat = false
     public var showsIdeaControls = false
     public var orbMode: String?
     public var recordingState: String?
@@ -22,6 +23,7 @@ public enum AuditRoute {
     public static func rootOwner(for id: String) -> String? {
         let owners: [String: String] = [
             "home-bento": "home", "home-radial-orb": "radial", "keyboard-composer": "composer",
+            "chat-exchange": "chat",
             "independent-write": "write", "inbox-universal-tiles": "inbox",
             "tasks-today": "tasks-today", "tasks-later": "tasks-later",
             "tasks-waiting": "tasks-waiting", "tasks-ideas": "tasks-ideas",
@@ -38,6 +40,7 @@ public enum AuditRoute {
         switch id {
         case "home-bento": return AuditDestination(tab: .home)
         case "home-radial-orb": return make(.home) { $0.orbMode = "radial" }
+        case "chat-exchange": return make(.home) { $0.showsChat = true }
         case "keyboard-composer": return make(.home) { $0.orbMode = "composer" }
         case "independent-write": return make(.home) { $0.orbMode = "write" }
         case "search-results": return make(.home) { $0.showsSearch = true }
