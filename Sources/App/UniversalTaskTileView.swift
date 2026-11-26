@@ -27,6 +27,8 @@ struct UniversalTaskTileView<TitleContent: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var dragOffset: CGFloat = 0
     @State private var confirmingDelete = false
+    @State private var showingMoveDialog = false
+    @State private var showingMoreDialog = false
 
     var body: some View {
         ZStack {
@@ -100,38 +102,40 @@ struct UniversalTaskTileView<TitleContent: View>: View {
 
     /// The one Move control: its items are the tile's move option labels.
     private var moveMenu: some View {
-        Menu {
-            ForEach(Array(tile.moveOptions.enumerated()), id: \.offset) { _, option in
-                Button(option.label) { callbacks.onMove?(option.target) }
-                    .accessibilityLabel(option.accessibilityLabel)
-            }
-        } label: {
+        Button { showingMoveDialog = true } label: {
             Image(systemName: SuggestionIcon.more.symbol)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Theme.accent)
                 .frame(minWidth: Theme.minimumTapTarget, minHeight: Theme.minimumTapTarget)
                 .contentShape(Rectangle())
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Move")
-        .accessibilityAddTraits(.isButton)
+        .buttonStyle(.plain)
+        .accessibilityLabel(UniversalTaskTile.moveMenuAccessibleName)
         .disabled(!tile.isEnabled || tile.isPending)
         .accessibilityHint(tile.moveDisabledReason ?? "")
+        .confirmationDialog(UniversalTaskTile.moveMenuAccessibleName, isPresented: $showingMoveDialog,
+                            titleVisibility: .hidden) {
+            ForEach(Array(tile.moveOptions.enumerated()), id: \.offset) { _, option in
+                Button(option.label) { callbacks.onMove?(option.target) }
+                    .accessibilityLabel(option.accessibilityLabel)
+            }
+        }
     }
 
     private var moreMenu: some View {
-        Menu {
-            contextMenuItems
-        } label: {
+        Button { showingMoreDialog = true } label: {
             Image(systemName: SuggestionIcon.more.symbol)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Theme.secondaryText)
                 .frame(minWidth: Theme.minimumTapTarget, minHeight: Theme.minimumTapTarget)
                 .contentShape(Rectangle())
         }
-        .accessibilityElement(children: .ignore)
+        .buttonStyle(.plain)
         .accessibilityLabel(UniversalTaskTile.moreMenuAccessibleName)
-        .accessibilityAddTraits(.isButton)
+        .confirmationDialog(UniversalTaskTile.moreMenuAccessibleName, isPresented: $showingMoreDialog,
+                            titleVisibility: .hidden) {
+            contextMenuItems
+        }
     }
 
     @ViewBuilder private var bodyBlock: some View {

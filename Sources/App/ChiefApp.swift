@@ -111,15 +111,22 @@ struct RootView: View {
                     .accessibilityHidden(orbModel.hidesBackgroundFromAccessibility)
                     .allowsHitTesting(!orbModel.hidesBackgroundFromAccessibility)
             }
+            if !isTyping {
+                bottomBar(initial)
+                    .frame(minHeight: initial.bottomBarHeight)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { measuredBarHeight = $0 }
+                    .accessibilityHidden(orbModel.hidesBackgroundFromAccessibility)
+                    .allowsHitTesting(!orbModel.hidesBackgroundFromAccessibility)
+            }
         }
-        .safeAreaInset(edge: .bottom, spacing: .zero) {
-            bottomBar(initial)
-                .frame(minHeight: initial.bottomBarHeight)
-                .fixedSize(horizontal: false, vertical: true)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { measuredBarHeight = $0 }
-                .accessibilityHidden(orbModel.hidesBackgroundFromAccessibility)
-                .allowsHitTesting(!orbModel.hidesBackgroundFromAccessibility)
-        }
+    }
+
+    /// The typed composer has focus: the bottom bar and orb step aside so Discard and Send sit above the keyboard.
+    private var isTyping: Bool {
+        guard TypedCaptureScreen.hidesBottomBarWhileTyping else { return false }
+        if case .keyboardComposer = orbModel.mode { return true }
+        return false
     }
 
     private func content(_ layout: RecordingPanelLayout) -> some View {

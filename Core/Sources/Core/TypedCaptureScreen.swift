@@ -19,6 +19,8 @@ public struct TypedCaptureField: Equatable, Sendable {
 /// Everything the typed capture view shows: one plain text field and Save / Cancel or Liquid Glass footer.
 @MainActor
 public struct TypedCaptureScreen {
+    /// The tab bar is hidden while the typed capture field is being edited.
+    public static let hidesBottomBarWhileTyping = true
     public let title = "Type a capture"
     public let placeholder = "What is on your mind"
     public let composerPlaceholder = "Write a thought, or describe the attachment"

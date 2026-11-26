@@ -60,6 +60,7 @@ struct TaskSearchView: View {
                 TextField("Search tasks, ideas, waiting...", text: $searchModel.query)
                     .foregroundStyle(Theme.text)
                     .autocorrectionDisabled()
+                    .accessibilityLabel("Search tasks")
                 if !searchModel.query.isEmpty {
                     Button { searchModel.query = "" } label: {
                         Image(systemName: "xmark.circle.fill")

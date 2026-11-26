@@ -200,9 +200,19 @@ struct SettingsView: View {
                 Text(voiceHint).font(.caption).foregroundStyle(Theme.amber).wrapping()
             }
             locationWeatherRow(cap)
-            Toggle(rem.switchLabel, isOn: Binding(get: { rem.isOn }, set: { enabled in
-                _Concurrency.Task { await environment.reminders.setBriefReminder(on: enabled) }
-            })).tint(Theme.accent).frame(minHeight: Theme.minimumTapTarget)
+            HStack {
+                Text(current.reminderSwitchAccessibilityLabel)
+                    .foregroundStyle(Theme.text)
+                    .accessibilityHidden(true)
+                Spacer()
+                Toggle(isOn: Binding(get: { rem.isOn }, set: { enabled in
+                    _Concurrency.Task { await environment.reminders.setBriefReminder(on: enabled) }
+                })) { }
+                    .labelsHidden()
+                    .accessibilityLabel(current.reminderSwitchAccessibilityLabel)
+                    .tint(Theme.accent)
+            }
+            .frame(minHeight: Theme.minimumTapTarget)
             DatePicker("Brief reminder time", selection: briefTimeBinding, displayedComponents: .hourAndMinute)
                 .foregroundStyle(Theme.text).frame(minHeight: Theme.minimumTapTarget)
             if let status = rem.statusText { Text(status).font(.footnote).foregroundStyle(Theme.amber).wrapping() }

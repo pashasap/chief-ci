@@ -108,7 +108,9 @@ public struct UniversalTaskTile: Equatable, Identifiable, Sendable {
     public static let swipeLeftAction: TileActionKind = .reject
     public static let contextMenuActions: [TileContextAction] = [.change, .goodFraming, .badFraming]
     /// The More control's label, shared with the views and the acceptance surface.
-    public static let moreMenuAccessibleName = "More actions"
+    public static let moreMenuAccessibleName = "More"
+    /// The Move control's label; differs from the More control's.
+    public static let moveMenuAccessibleName = "Move"
     /// The actions this tile still offers, in the order the row shows them.
     public var visibleActions: [TileActionKind] { TileActionKind.allCases.filter { !hiddenActions.contains($0) } }
     /// Every action the tile offers, in the order the row shows them.
