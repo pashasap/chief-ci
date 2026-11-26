@@ -89,9 +89,11 @@ public enum TaskTileText {
         }
     }
 
-    private static let codePattern = try? NSRegularExpression(pattern: "\\b[A-Za-z]{1,3}\\d*-\\d+(?:-\\d+)?\\b")
-    // Examples: P-1116-3, c1115-04-1, A-1116-1, Q-1113-1, FB-123. A code starts with up to three letters,
-    // then a number, then at least one hyphen-number group; a bare date such as 2026-11-17 never matches.
+    // Exactly the server handle formats: prefix P, A, Q, R, FB or c, then digits, then one or more
+    // hyphen-digit groups. Examples: P-1116-3, c1115-04-1, A-1116-1, Q-1113-1, FB-123.
+    // A bare date such as 2026-11-17 and look-alikes such as TK-1984, ABC-12 or X-77-2 never match.
+    private static let codePattern = try? NSRegularExpression(
+        pattern: "(?<![A-Za-z0-9])(?:FB|[PAQRc])\\d*(?:-\\d+)+(?![A-Za-z0-9])")
 
     static func kind(of code: String) -> TaskCodeKind {
         let upper = code.uppercased()

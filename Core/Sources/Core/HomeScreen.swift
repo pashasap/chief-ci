@@ -283,7 +283,8 @@ public struct HomeScreen: Equatable, Sendable {
             parts.append("Your inbox is clear.")
         }
         if let brief = snapshot?.brief, brief.recorded, !brief.lines.isEmpty {
-            parts.append(contentsOf: brief.lines.filter { !$0.isEmpty }.prefix(6))
+            let lines = brief.lines.map { TaskTileText.text($0) }.filter { !$0.isEmpty }
+            parts.append(contentsOf: lines.prefix(6))
         }
         return parts.joined(separator: " ")
     }

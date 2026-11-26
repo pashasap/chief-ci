@@ -52,7 +52,11 @@ public final class BriefingAudioModel {
             return
         }
         let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
-        let spoken = trimmed.isEmpty ? "No briefing items today." : trimmed
+        let cleaned = trimmed.split(whereSeparator: \.isNewline)
+            .map { TaskTileText.text(String($0)) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        let spoken = cleaned.isEmpty ? "No briefing items today." : cleaned
         if spoken != activeScript {
             elapsedSeconds = 0
             activeScript = spoken

@@ -135,6 +135,12 @@ public struct BriefPresentation {
             emptyText: rows.isEmpty && summary == nil ? empty : nil)
     }
 
+    /// One row whose text is the cleaned line; nil when the line was only a handle code.
+    private func cleanedRow(id: String, kind: BriefRowKind, raw: String) -> BriefRow? {
+        let text = TaskTileText.text(raw)
+        return text.isEmpty ? nil : BriefRow(id: id, kind: kind, text: text)
+    }
+
     private var tasks: BriefSection {
         let today = snapshot?.today ?? ""
         let due = (snapshot?.tasks ?? []).filter { task in
@@ -143,40 +149,43 @@ public struct BriefPresentation {
             guard when.kind == "due", let date = when.date else { return false }
             return date <= today
         }
-        let rows = due.map { task in
-            BriefRow(
-                id: task.handle, kind: .task, text: TaskTileText.text(task.text),
-                controls: [
-                    InboxControl(
-                        label: "Mark done", role: .normal, isEnabled: true, state: .idle,
-                        action: .markDone(task.handle), icon: SuggestionIcon.forAction(.markDone(task.handle)),
-                        accessibilityLabel: "Mark done")
-                ])
+        let rows = due.compactMap { task -> BriefRow? in
+            guard var row = cleanedRow(id: task.handle, kind: .task, raw: task.text) else { return nil }
+            row.controls = [
+                InboxControl(
+                    label: "Mark done", role: .normal, isEnabled: true, state: .idle,
+                    action: .markDone(task.handle), icon: SuggestionIcon.forAction(.markDone(task.handle)),
+                    accessibilityLabel: "Mark done")
+            ]
+            return row
         }
         return section(.tasks, rows, empty: "Nothing due today.")
     }
 
     private var decisions: BriefSection {
-        let rows = (snapshot?.questions ?? []).filter { $0.state == "open" }.map {
-            BriefRow(id: $0.handle, kind: .decision, text: $0.question)
-        }
+        let rows = (snapshot?.questions ?? []).filter { $0.state == "open" }
+            .compactMap { cleanedRow(id: $0.handle, kind: .decision, raw: $0.question) }
         return section(.decisions, rows, empty: "No open decisions.")
     }
 
     private var proposals: BriefSection {
         guard let decisions = shared?.decisions else {
             let open = (snapshot?.proposals ?? []).filter { $0.state == "open" }
-            return section(.proposals, open.map { BriefRow(id: $0.handle, kind: .proposal, text: $0.would) },
-                empty: "No open proposals.")
+            return section(.proposals, open.compactMap {
+                cleanedRow(id: $0.handle, kind: .proposal, raw: $0.would)
+            }, empty: "No open proposals.")
         }
         let builder = InboxRowBuilder(decisions: decisions, drafts: InboxDrafts(texts: inbox.drafts.texts))
         let known = Set((snapshot?.captures ?? []).map(\.id))
         let listed = (snapshot?.proposals ?? []).filter {
             $0.state == "open" || decisions.state(for: $0.handle) != nil || $0.queuedLine != nil
         }
-        let rows = listed.map { proposal -> BriefRow in
+        let rows = listed.compactMap { proposal -> BriefRow? in
+            guard var row = cleanedRow(id: proposal.handle, kind: .proposal, raw: proposal.would) else {
+                return nil
+            }
             let shown = builder.proposalRow(proposal)
-            var row = BriefRow(id: proposal.handle, kind: .proposal, text: proposal.would, controls: shown.controls)
+            row.controls = shown.controls
             row.because = proposal.because
             row.statusText = shown.statusText
             row.detailsText = shown.detailsText
@@ -189,10 +198,13 @@ public struct BriefPresentation {
     private var ideaSection: BriefSection {
         guard let ideas = shared else {
             let open = (snapshot?.candidates ?? []).filter { $0.state == nil || $0.state == "open" }
-            return section(.ideas, open.map { BriefRow(id: $0.handle, kind: .idea, text: $0.text) }, empty: "No ideas yet.")
+            return section(.ideas, open.compactMap {
+                cleanedRow(id: $0.handle, kind: .idea, raw: $0.text)
+            }, empty: "No ideas yet.")
         }
-        let rows = ideas.rows.map { idea -> BriefRow in
-            var row = BriefRow(id: idea.handle, kind: .idea, text: idea.text, controls: idea.controls)
+        let rows = ideas.rows.compactMap { idea -> BriefRow? in
+            guard var row = cleanedRow(id: idea.handle, kind: .idea, raw: idea.text) else { return nil }
+            row.controls = idea.controls
             row.statusText = idea.statusText
             row.detailsText = idea.detailsText
             return row
@@ -211,9 +223,10 @@ public struct BriefPresentation {
             let (a, b) = ($0.date ?? "", $1.date ?? "")
             return a != b ? a > b : ($0.title ?? $0.handle) < ($1.title ?? $1.handle)
         }
-        let rows = sorted.map {
-            var row = BriefRow(id: $0.handle, kind: .result, text: $0.title ?? $0.handle)
-            row.linkTarget = $0.handle
+        let rows = sorted.compactMap { result -> BriefRow? in
+            guard var row = cleanedRow(id: result.handle, kind: .result, raw: result.title ?? result.handle)
+            else { return nil }
+            row.linkTarget = result.handle
             return row
         }
         return section(.results, rows, empty: "No results yet.")

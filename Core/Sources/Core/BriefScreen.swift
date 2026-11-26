@@ -69,9 +69,14 @@ public struct BriefScreen {
         return parts.isEmpty ? "Empty" : parts.joined(separator: ", ")
     }
 
+    /// The recorded lines with server handle codes removed; a line that was only a code is empty here.
+    private var cleanedLines: [String] {
+        (snapshot?.brief?.lines ?? []).map { TaskTileText.text($0) }
+    }
+
     public var recorded: [BriefLine] {
         guard let brief = snapshot?.brief, brief.recorded else { return [] }
-        return brief.lines.map { line in
+        return cleanedLines.map { line in
             if line.isEmpty { return .gap }
             return line.hasPrefix("•") ? .listRow(line) : .heading(line)
         }
@@ -97,8 +102,8 @@ public struct BriefScreen {
 
     public var executiveFocusSummary: String {
         if let brief = snapshot?.brief, brief.recorded {
-            let lines = brief.lines.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            if !lines.isEmpty { return lines.joined(separator: "\n") }
+            let lines = cleanedLines.filter { !$0.isEmpty }
+            return lines.joined(separator: "\n")
         }
         return recordedEmpty ?? BriefRecordedSection.emptyNote
     }
@@ -124,7 +129,9 @@ public struct BriefScreen {
 
     public func spokenBriefScript(now: Date, timeZone: TimeZone, focus: FocusFilter? = nil) -> String {
         let heading = liveDateHeading(now: now, timeZone: timeZone)
-        let focusLine = focus.map { "Active focus: \($0.label). " } ?? ""
-        return "Daily Briefing for \(heading). \(focusLine)\(executiveFocusSummary)"
+        let focusLine = focus.map { "Active focus: \($0.label)." } ?? ""
+        let body = [focusLine, executiveFocusSummary].filter { !$0.isEmpty }.joined(separator: " ")
+        let lead = "Daily Briefing for \(heading)."
+        return body.isEmpty ? lead : lead + " " + body
     }
 }
