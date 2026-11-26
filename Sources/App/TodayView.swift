@@ -164,9 +164,27 @@ struct TodayView: View {
             }
         } else {
             if tiles.isEmpty, let empty = segment.emptyText { Text(empty).foregroundStyle(Theme.secondaryText).wrapping() }
+            let ideas = Dictionary(segment.ideas.map { ($0.handle, $0) }, uniquingKeysWith: { first, _ in first })
             ForEach(tiles) { tile in
-                UniversalTaskTileView(tile: tile, callbacks: tileCallbacks(tile, screen: screen))
+                if let idea = ideas[tile.id] {
+                    ideaRow(idea, tile: tile, screen: screen)
+                } else {
+                    UniversalTaskTileView(tile: tile, callbacks: tileCallbacks(tile, screen: screen))
+                }
             }
+        }
+    }
+
+    private func ideaRow(_ idea: TodayIdeaRow, tile: UniversalTaskTile, screen: TodayScreen) -> some View {
+        var card = tile
+        card.metaLine = idea.statusText ?? tile.metaLine
+        card.hiddenActions.insert(.delete)
+        let draft = Binding(
+            get: { inbox.drafts.texts[idea.handle] ?? "" },
+            set: { inbox.drafts.texts[idea.handle] = $0 })
+        let view = UniversalTaskTileView(tile: card, callbacks: tileCallbacks(card, screen: screen))
+        return TodayIdeaCard(tile: view, idea: idea, draft: draft) { control in
+            Task { await screen.perform(control) }
         }
     }
 

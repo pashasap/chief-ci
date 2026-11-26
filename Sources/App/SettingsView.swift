@@ -34,6 +34,7 @@ struct SettingsView: View {
     @State private var exportingDiagnostics = false
     @State private var exportDocument = DiagnosticsExportDocument(data: Data())
     @State private var exportNotice: String?
+    @State private var selectedVoice: VoiceCandidate?
 
     init(
         environment: AppEnvironment,
@@ -52,7 +53,7 @@ struct SettingsView: View {
         SettingsScreen(
             model: model,
             framingSignalCount: framingStore.entries.count,
-            selectedVoice: BriefingAudioAdapter.selectedVoiceCandidate(),
+            selectedVoice: selectedVoice,
             weather: weatherModel
         )
     }
@@ -76,7 +77,8 @@ struct SettingsView: View {
             }
             .toolbar(.hidden, for: .navigationBar)
             .refreshable { await model.checkServer() }
-            .task { await openedSettings() }
+            .task { await environment.openedSettings() }
+            .task { await loadBriefingVoice() }
             .confirmationDialog(current.unpairTitle, isPresented: $confirmingUnpair) {
                 Button(current.unpairLabel, role: .destructive) { model.unpair() }
                 Button(current.cancelLabel, role: .cancel) {}
@@ -93,18 +95,29 @@ struct SettingsView: View {
         }
     }
 
-    private func openedSettings() async {
-        await model.opened()
-        if environment.audit == nil {
-            LocationWeatherAdapter.shared.refreshIfAuthorized()
-        }
+    private func loadBriefingVoice() async {
+        guard environment.audit == nil else { return }
+        let voice = await _Concurrency.Task.detached {
+            BriefingAudioAdapter.selectedVoiceCandidate()
+        }.value
+        if !_Concurrency.Task.isCancelled { selectedVoice = voice }
     }
 
     private func header(_ current: SettingsScreen) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(current.eyebrow).font(.caption.weight(.semibold)).textCase(.uppercase).foregroundStyle(Theme.accent)
-            Text(current.title).font(.largeTitle.bold()).foregroundStyle(Theme.primaryWhite)
-                .wrapping().accessibilityAddTraits(.isHeader)
+            settingsTitle(current)
+        }
+    }
+
+    @ViewBuilder
+    private func settingsTitle(_ current: SettingsScreen) -> some View {
+        let title = Text(current.title).font(.largeTitle.bold()).foregroundStyle(Theme.primaryWhite)
+            .wrapping().accessibilityAddTraits(.isHeader)
+        if let identifier = environment.auditRootID("settings") {
+            title.accessibilityIdentifier(identifier)
+        } else {
+            title
         }
     }
 
@@ -237,9 +250,15 @@ struct SettingsView: View {
         }.padding(16).liquidGlassTile(glow: .none)
     }
 
+    @ViewBuilder
     private func footer(_ current: SettingsScreen) -> some View {
-        Text(current.versionFooter).font(.footnote.monospacedDigit()).foregroundStyle(Theme.secondaryText)
-            .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4)
+        let version = Text(current.versionFooter).font(.footnote.monospacedDigit()).foregroundStyle(Theme.secondaryText)
+            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4)
+        if environment.audit == nil {
+            version.textSelection(.enabled)
+        } else {
+            version
+        }
     }
 
     private func pillButton(_ title: String, tint: Color, enabled: Bool, action: @escaping () -> Void) -> some View {

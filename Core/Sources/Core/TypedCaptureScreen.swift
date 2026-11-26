@@ -21,7 +21,8 @@ public struct TypedCaptureField: Equatable, Sendable {
 public struct TypedCaptureScreen {
     public let title = "Type a capture"
     public let placeholder = "What is on your mind"
-    public let composerPlaceholder = "Write a thought, or describe the attachment..."
+    public let composerPlaceholder = "Write a thought, or describe the attachment"
+    public let voiceSwitchMinimumSide = DesignTokens.minimumTapTarget
     public let heading: String
     public let attachmentChipText: String?
     public let canSend: Bool

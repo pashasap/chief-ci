@@ -140,7 +140,7 @@ public struct RecordingScreen {
         savedText = saved
         let resolvedTranscript = saved == nil ? nil : (model.isTranscribing ? "Transcribing" : (model.transcript.isEmpty ? "No transcript. The recording will be sent." : model.transcript))
         transcriptLine = resolvedTranscript
-        livePreviewLine = recording ? (model.transcript.isEmpty ? "Listening…" : model.transcript) : resolvedTranscript
+        livePreviewLine = recording ? (model.transcript.isEmpty ? "Listening" : model.transcript) : resolvedTranscript
         deliveryLine = model.deliveryLine
         controls = recovery + Self.controls(recording: recording)
         footerControls = denied ? [] : Self.footerControls(recording: recording)

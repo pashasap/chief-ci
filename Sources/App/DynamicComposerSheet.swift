@@ -51,17 +51,19 @@ struct DynamicComposerSheet: View {
                 .foregroundStyle(Theme.text)
                 .wrapping()
             Spacer()
-            if availability.isEnabled && model.editingHandle == nil {
+            if model.editingHandle == nil,
+               let voiceSwitch = screen.controls.first(where: { $0.action == .recordInstead && $0.isEnabled }) {
                 Button {
                     onRecordInstead()
                 } label: {
                     Image(systemName: "mic.fill")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Theme.accent)
-                        .frame(minWidth: Theme.minimumTapTarget, minHeight: Theme.minimumTapTarget)
+                        .frame(minWidth: screen.voiceSwitchMinimumSide, minHeight: screen.voiceSwitchMinimumSide)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Record instead")
+                .accessibilityLabel(voiceSwitch.label)
             }
         }
     }

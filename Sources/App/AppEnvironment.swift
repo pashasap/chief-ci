@@ -84,6 +84,13 @@ final class AppEnvironment {
         await coordinator.openWrite(recording: recording, typed: typed)
     }
 
+    func openedSettings() async {
+        guard audit == nil else { return }
+        await settings.opened()
+        guard !_Concurrency.Task.isCancelled else { return }
+        LocationWeatherAdapter.shared.refreshIfAuthorized()
+    }
+
     /// The sheet model for a tapped result in the Brief tab.
     func resultSheet(handle: String) -> ResultSheetModel {
         ResultSheetModel(handle: handle, inbox: inbox, transport: transport, pairing: pairing)
@@ -137,11 +144,11 @@ final class AppEnvironment {
     }
 
     func prepareAudit() async {
-        guard let audit else { return }
-        coordinator.selectedTab = audit.tab
-        today.selectedSegment = 0
+        guard let audit, let destination = AuditRoute.destination(for: audit.stop.id) else { return }
+        today.selectedSegment = destination.tasksSegment ?? 0
         await inbox.refresh()
         await audit.prepareCapture(coordinator: coordinator, recording: recording, typed: typed)
+        _ = AuditWiring.exposedRoot(stopID: audit.stop.id, coordinator: coordinator)
     }
 
     func capture(id: String) -> CaptureDetailModel? {

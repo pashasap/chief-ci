@@ -50,6 +50,7 @@ struct FocusEditorSheet: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Theme.secondaryText)
             TextField("e.g. Carvolix", text: $label)
+                .accessibilityLabel(FocusEditorScreen.labelFieldAccessibilityLabel)
                 .textFieldStyle(.plain)
                 .foregroundStyle(Theme.text)
                 .padding(14)
@@ -68,6 +69,7 @@ struct FocusEditorSheet: View {
                 axis: .vertical
             )
             .lineLimit(3...6)
+            .accessibilityLabel(FocusEditorScreen.purposeFieldAccessibilityLabel)
             .textFieldStyle(.plain)
             .foregroundStyle(Theme.text)
             .padding(14)

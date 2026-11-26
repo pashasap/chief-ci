@@ -85,7 +85,7 @@ public final class LayoutAuditFixture: FileStore, Clock, UUIDSource, TokenStore,
     public func send(_ request: HTTPRequest) async throws -> HTTPResponse {
         switch (request.method, request.url.path) {
         case ("GET", "/v1/health"): HTTPResponse(status: 200, body: Data(#"{"ok":true}"#.utf8))
-        case ("GET", "/v1/snapshot"): HTTPResponse(status: 200, body: snapshot)
+        case ("GET", "/v1/snapshot"): HTTPResponse(status: 200, body: try snapshot())
         case ("POST", "/v1/chat"): HTTPResponse(status: 200, body: Data(#"{"reply":"Paris."}"#.utf8))
         default: HTTPResponse(status: 503)
         }
@@ -100,13 +100,13 @@ public final class LayoutAuditFixture: FileStore, Clock, UUIDSource, TokenStore,
         return session
     }
 
-    private var snapshot: Data {
+    private func snapshot() throws -> Data {
         let fields: String
         switch stop.id {
         case "xl-bottom-bar": fields = unreadableFields
         case "tasks-today-picks": fields = picksFields
         case "tasks-later-candidate": fields = candidateFields
-        default: fields = todayFields
+        default: fields = try todayFields()
         }
         return Data("""
             {"api":2,"today":"2026-11-17","timezone":"UTC","generated_at":"2026-11-17T12:00:00Z",\(fields)}
@@ -136,15 +136,17 @@ public final class LayoutAuditFixture: FileStore, Clock, UUIDSource, TokenStore,
             """
     }
 
-    private var todayFields: String {
+    private func todayFields() throws -> String {
         let notes = String(repeating: "Review sample notes and prepare the next demo. ", count: 8)
+        let seed = AuditRoute.destination(for: stop.id)?.seedIdeaText ?? "Plan a demo"
+        let ideaText = String(decoding: try JSONEncoder().encode(seed), as: UTF8.self)
         return """
             "tasks":[
               {"handle":"sample-short","rev":"r1","text":"\(notes.prefix(100))","state":"open","when":{"kind":"today"}},
               {"handle":"sample-long","rev":"r1","text":"\(notes.prefix(350))","state":"open","when":{"kind":"today"}},
               {"handle":"sample-later","rev":"r1","text":"Check the supply list","state":"open","when":{"kind":"later"}}],
             "waiting":[{"handle":"sample-waiting","rev":"r1","text":"Await sample delivery","state":"open"}],
-            "candidates":[{"handle":"sample-idea","rev":"r1","text":"Plan a demo","state":"open"}]
+            "candidates":[{"handle":"sample-idea","rev":"r1","text":\(ideaText),"state":"open"}]
             """
     }
 

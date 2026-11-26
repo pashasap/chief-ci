@@ -96,6 +96,13 @@ public final class CaptureOrbModel {
     public private(set) var radialOptions: [OrbRadialOption] = []
     public private(set) var lastFallbackNotice: String?
 
+    public var hidesBackgroundFromAccessibility: Bool {
+        switch mode {
+        case .radialOpen, .keyboardComposer, .attachmentPicker, .chat: true
+        case .idle, .recording: false
+        }
+    }
+
     public init() {}
 
     public func tapOrb(availability: RecordAvailability = RecordAvailability()) {

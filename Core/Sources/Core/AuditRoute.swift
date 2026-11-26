@@ -14,6 +14,7 @@ public struct AuditDestination: Hashable, Sendable {
     public var orbMode: String?
     public var recordingState: String?
     public var textSize: AuditTextSize = .standard
+    public var seedIdeaText: String?
 
     public init(tab: AppTab) { self.tab = tab }
 }
@@ -63,15 +64,28 @@ public enum AuditRoute {
         case "tasks-later": return make(.today) { $0.tasksSegment = 1 }
         case "tasks-later-candidate": return make(.today) { $0.tasksSegment = 1; $0.showsCandidates = true }
         case "tasks-waiting": return make(.today) { $0.tasksSegment = 2 }
-        case "tasks-ideas": return make(.today) { $0.tasksSegment = 3 }
-        case "idea-controls": return make(.today) { $0.tasksSegment = 3; $0.showsIdeaControls = true }
+        case "tasks-ideas": return ideas("Start a seed swap at the library")
+        case "idea-controls": return ideas("Make a map of neighborhood water fountains", showsControls: true)
         case "idea-controls-xl":
-            return make(.today) { $0.tasksSegment = 3; $0.showsIdeaControls = true; $0.textSize = .accessibilityXL }
+            return ideas(
+                "Record a walking tour that explains how the old railway became a neighborhood greenway",
+                showsControls: true, textSize: .accessibilityXL)
         case "focus-modal": return make(.today) { $0.showsFocusEditor = true }
         case "xl-today-recording":
             return make(.today) { $0.recordingState = "recording"; $0.textSize = .accessibilityXL }
         case "settings": return AuditDestination(tab: .settings)
         default: return nil
+        }
+    }
+
+    private static func ideas(
+        _ seed: String, showsControls: Bool = false, textSize: AuditTextSize = .standard
+    ) -> AuditDestination {
+        make(.today) {
+            $0.tasksSegment = 3
+            $0.seedIdeaText = seed
+            $0.showsIdeaControls = showsControls
+            $0.textSize = textSize
         }
     }
 

@@ -102,16 +102,23 @@ struct RootView: View {
             largestText: textSize.isAccessibilitySize)
         let layout = RecordingPanelLayout(width: size.width, height: size.height,
             largestText: initial.largestText, measuredBarHeight: measuredBarHeight)
-        return VStack(spacing: 0) {
+        return VStack(spacing: .zero) {
             content(layout)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .safeAreaInset(edge: .bottom, spacing: 0) { orbComposerInset }
-            if environment.recording.isPanelPresented { recordingPanel(layout) }
+                .safeAreaInset(edge: .bottom, spacing: .zero) { orbComposerInset }
+            if environment.recording.isPanelPresented {
+                recordingPanel(layout)
+                    .accessibilityHidden(orbModel.hidesBackgroundFromAccessibility)
+                    .allowsHitTesting(!orbModel.hidesBackgroundFromAccessibility)
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: .zero) {
             bottomBar(initial)
                 .frame(minHeight: initial.bottomBarHeight)
                 .fixedSize(horizontal: false, vertical: true)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { measuredBarHeight = $0 }
-                .layoutPriority(1)
+                .accessibilityHidden(orbModel.hidesBackgroundFromAccessibility)
+                .allowsHitTesting(!orbModel.hidesBackgroundFromAccessibility)
         }
     }
 
@@ -129,6 +136,8 @@ struct RootView: View {
                 KitLineBar { environment.uploader.kitBar }.padding(.horizontal, 16)
             }
         }
+        .accessibilityHidden(orbModel.hidesBackgroundFromAccessibility)
+        .allowsHitTesting(!orbModel.hidesBackgroundFromAccessibility)
     }
 
     @ViewBuilder
@@ -184,8 +193,6 @@ struct RootView: View {
         environment.typed.onEditSubmit = { submission in await submitTileEdit(submission) }
         guard let auditStop = environment.audit?.stop else { return }
         guard let destination = AuditRoute.destination(for: auditStop.id) else { return }
-        if let segment = destination.tasksSegment { environment.today.selectedSegment = segment }
-        _ = AuditWiring.exposedRoot(stopID: auditStop.id, coordinator: environment.coordinator)
         switch destination.orbMode {
         case "radial": orbModel.longPressOrb()
         case "composer":
@@ -273,7 +280,6 @@ private struct RootTabContent: View {
                 .auditRoot(environment.auditRootID(tasksOwner))
         case .settings:
             SettingsView(environment: environment, focusModel: shared.focusModel, framingStore: shared.framingStore)
-                .auditRoot(environment.auditRootID("settings"))
         }
     }
 

@@ -109,10 +109,12 @@ struct UniversalTaskTileView<TitleContent: View>: View {
             Image(systemName: SuggestionIcon.more.symbol)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Theme.accent)
-                .frame(minWidth: 44, minHeight: 44)
+                .frame(minWidth: Theme.minimumTapTarget, minHeight: Theme.minimumTapTarget)
                 .contentShape(Rectangle())
         }
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("Move")
+        .accessibilityAddTraits(.isButton)
         .disabled(!tile.isEnabled || tile.isPending)
         .accessibilityHint(tile.moveDisabledReason ?? "")
     }
@@ -121,13 +123,15 @@ struct UniversalTaskTileView<TitleContent: View>: View {
         Menu {
             contextMenuItems
         } label: {
-            Image(systemName: "ellipsis")
+            Image(systemName: SuggestionIcon.more.symbol)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Theme.secondaryText)
-                .frame(minWidth: 44, minHeight: 44)
+                .frame(minWidth: Theme.minimumTapTarget, minHeight: Theme.minimumTapTarget)
                 .contentShape(Rectangle())
         }
-        .accessibilityLabel("More actions")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(UniversalTaskTile.moreMenuAccessibleName)
+        .accessibilityAddTraits(.isButton)
     }
 
     @ViewBuilder private var bodyBlock: some View {
