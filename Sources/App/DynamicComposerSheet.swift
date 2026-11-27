@@ -34,7 +34,10 @@ struct DynamicComposerSheet: View {
         .liquidGlassTile(glow: .cyan)
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
-        .onAppear { fieldFocused = true }
+        .task {
+            await _Concurrency.Task.yield()
+            fieldFocused = true
+        }
         .onChange(of: model.isClosed) { _, closed in
             if closed { onDismiss() }
         }

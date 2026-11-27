@@ -108,18 +108,24 @@ struct RootView: View {
                 .safeAreaInset(edge: .bottom, spacing: .zero) { orbComposerInset }
             if environment.recording.isPanelPresented && !environment.recording.isTypingInstead {
                 recordingPanel(layout)
-                    .accessibilityHidden(orbModel.hidesBackgroundFromAccessibility)
-                    .allowsHitTesting(!orbModel.hidesBackgroundFromAccessibility)
+                    .accessibilityHidden(backgroundHidden)
+                    .allowsHitTesting(!backgroundHidden)
             }
             if !isTyping {
                 bottomBar(initial)
                     .frame(minHeight: initial.bottomBarHeight)
                     .fixedSize(horizontal: false, vertical: true)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { measuredBarHeight = $0 }
-                    .accessibilityHidden(orbModel.hidesBackgroundFromAccessibility)
-                    .allowsHitTesting(!orbModel.hidesBackgroundFromAccessibility)
+                    .accessibilityHidden(backgroundHidden)
+                    .allowsHitTesting(!backgroundHidden)
             }
         }
+    }
+
+    private var backgroundHidden: Bool {
+        TypedCaptureScreen.hidesBackground(
+            orbHidesBackground: orbModel.hidesBackgroundFromAccessibility,
+            typingInstead: environment.recording.isTypingInstead)
     }
 
     /// The typed composer has focus: the bottom bar and orb step aside so Discard and Send sit above the keyboard.
@@ -160,8 +166,8 @@ struct RootView: View {
                 KitLineBar { environment.uploader.kitBar }.padding(.horizontal, 16)
             }
         }
-        .accessibilityHidden(orbModel.hidesBackgroundFromAccessibility)
-        .allowsHitTesting(!orbModel.hidesBackgroundFromAccessibility)
+        .accessibilityHidden(backgroundHidden)
+        .allowsHitTesting(!backgroundHidden)
     }
 
     @ViewBuilder

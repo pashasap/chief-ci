@@ -27,6 +27,11 @@ public struct TypedCaptureScreen {
         let anyOpen = orbComposerOpen || typingInstead
         return hidesBottomBarWhileTyping && anyOpen
     }
+
+    /// True when the orb hides the background or the type-instead composer is open.
+    public static func hidesBackground(orbHidesBackground: Bool, typingInstead: Bool) -> Bool {
+        orbHidesBackground || typingInstead
+    }
     public let title = "Type a capture"
     public let placeholder = "What is on your mind"
     public let composerPlaceholder = "Write a thought, or describe the attachment"

@@ -1,2 +1,0 @@
-test_001_J_01 J-01 1
-test_002_PAIR_01 PAIR-01 1
